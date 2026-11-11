@@ -557,6 +557,8 @@
     <string name="pw_remote_dns_hint">如 1.1.1.1 或 DoH 地址</string>
     <string name="pw_not_set">未设置</string>
     <string name="pw_state_label">运行状态</string>
+    <string name="pw_comp_stopped">未运行</string>
+    <string name="pw_comp_absent">未安装</string>
     <string name="pw_main_switch_label">主开关</string>
     <string name="pw_pick_label">节点选择</string>
     <string name="pw_check_cn_label">国内网络 · 百度</string>
@@ -564,7 +566,6 @@
     <string name="pw_check_tap">点我检测</string>
     <string name="pw_check_running">检测中…</string>
     <string name="pw_check_fail">不可达</string>
-    <string name="pw_check_denied">路由器未授权执行检测</string>
     <string name="pw_ip_cn_label">国内 IP</string>
     <string name="pw_ip_g_label">国外 IP</string>
     <string name="pw_sub_header">订阅管理</string>
@@ -578,7 +579,7 @@
     <string name="pw_sub_url_hint">订阅地址 URL</string>
     <string name="pw_sub_delete_confirm">删除订阅「%1$s」？它名下的节点会在下次更新清理时移除。</string>
     <string name="pw_sub_updating">更新中…</string>
-    <string name="pw_sub_updated">订阅已更新</string>
+    <string name="pw_sub_triggered">已在路由器上开始更新，稍等片刻下拉刷新</string>
     <string name="pw_sub_update_failed">更新失败：%1$s</string>
     <string name="pw_group_default">默认分组</string>
     <string name="pw_group_count">%1$s（%2$d）</string>

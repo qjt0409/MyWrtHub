@@ -1,1 +1,1 @@
-{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.5:PassWall 页按 LuCI 状态页布局重排(运行状态+主开关、节点选择、百度/谷歌网络监测、国内/国外 IP、订阅管理、节点按分组显示);总览下行/上行卡改为今日数据(副行仍是本月)。含 1.4 的快捷模式/代理/DNS 与 1.3 的 HTTPS 闪退修复。", "versionCode": 6, "versionName": "1.5"}
+{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.6:修复 PassWall 监测与订阅更新在部分固件上被拒的问题(改走 LuCI 网页版同款接口);运行状态新增 TCP/UDP/DNS/HAPROXY 组件监测;国内 IP 改取 WAN 口地址,国外 IP 经路由器 Socks 出口实测。含 1.5 的状态页布局与总览今日流量。", "versionCode": 7, "versionName": "1.6"}

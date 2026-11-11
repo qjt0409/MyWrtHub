@@ -2,6 +2,7 @@ package com.whykangkang.wrthub.api;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.whykangkang.wrthub.model.PasswallNode;
 
 import java.util.ArrayList;
@@ -342,29 +343,141 @@ public final class PasswallApi {
     }
 
     /**
-     * 更新一条订阅:与 LuCI 同一条命令
-     * (lua /usr/share/&lt;config&gt;/subscribe.lua start &lt;section&gt; manual),
-     * 经 file.exec 执行;订阅拉取+解析可能要几十秒,超时给足 180 秒。
-     * file.exec 被 ACL 拒时如实回调失败。
+     * 更新一条订阅:走 LuCI 网页版同款 CGI 端点 subscribe_manual
+     * (服务端触发 subscribe.lua 并立即返回),不依赖 file.exec——
+     * 该通道在部分固件上会被 rpcd ACL 拒绝(2026-11-11 实机坐实)。
+     * url 要带上当前值:与配置不一致时 LuCI 会先帮存一遍。
      */
-    public static void updateSubscription(String config, String section,
+    public static void updateSubscription(String config, String section, String url,
                                           ApiCallback<Boolean> cb) {
-        String[] args = {"/usr/share/" + config + "/subscribe.lua", "start", section, "manual"};
-        api().fileExec("/usr/bin/lua", args, 180, new ApiCallback<JsonObject>() {
-            @Override
-            public void onSuccess(JsonObject result) {
-                cb.onSuccess(true);
-            }
+        java.util.Map<String, String> form = new java.util.HashMap<>();
+        form.put("section", section);
+        form.put("url", url == null ? "" : url);
+        api().cgiPost("/admin/services/" + config + "/subscribe_manual", form, 30,
+                new ApiCallback<String>() {
+                    @Override
+                    public void onSuccess(String body) {
+                        String error = parseSubscribeError(body);
+                        if (error == null) {
+                            cb.onSuccess(true);
+                        } else {
+                            cb.onFailure(new ApiError(ApiError.Type.UBUS_ERROR, error));
+                        }
+                    }
 
-            @Override
-            public void onFailure(ApiError error) {
-                cb.onFailure(error);
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+    }
+
+    /** 全部更新:LuCI 的 subscribe_manual_all(sections/urls 逗号拼接) */
+    public static void updateAllSubscriptions(String config,
+                                              java.util.List<Subscription> subs,
+                                              ApiCallback<Boolean> cb) {
+        if (subs == null || subs.isEmpty()) {
+            cb.onSuccess(true);
+            return;
+        }
+        StringBuilder sections = new StringBuilder();
+        StringBuilder urls = new StringBuilder();
+        for (Subscription s : subs) {
+            if (sections.length() > 0) {
+                sections.append(',');
+                urls.append(',');
             }
-        });
+            sections.append(s.section);
+            urls.append(s.url == null ? "" : s.url);
+        }
+        java.util.Map<String, String> form = new java.util.HashMap<>();
+        form.put("sections", sections.toString());
+        form.put("urls", urls.toString());
+        api().cgiPost("/admin/services/" + config + "/subscribe_manual_all", form, 30,
+                new ApiCallback<String>() {
+                    @Override
+                    public void onSuccess(String body) {
+                        String error = parseSubscribeError(body);
+                        if (error == null) {
+                            cb.onSuccess(true);
+                        } else {
+                            cb.onFailure(new ApiError(ApiError.Type.UBUS_ERROR, error));
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+    }
+
+    /** subscribe_manual 的返回:{"success":true} 或 {"success":false,"msg":..};成功返回 null */
+    static String parseSubscribeError(String body) {
+        try {
+            JsonObject o = JsonParser.parseString(body).getAsJsonObject();
+            if (o.has("success") && o.get("success").getAsBoolean()) return null;
+            if (o.has("msg")) return o.get("msg").getAsString();
+            return "unknown response";
+        } catch (Exception e) {
+            return "unparsable response";
+        }
     }
 
     // =====================================================================
-    // 连通性与 IP 检测(路由器侧 curl,与 LuCI 状态页同口径)
+    // 组件运行状态(LuCI 状态页的 index_status,CGI 直读)
+    // =====================================================================
+
+    /** TCP/UDP/DNS/HAPROXY 四个组件的运行状态;null = 状态页没给这一项 */
+    public static final class ComponentStatus {
+        public Boolean tcp;
+        public Boolean udp;
+        public Boolean dns;
+        /** -1 未装,0 运行中,1 未运行;null 未知 */
+        public Integer haproxy;
+    }
+
+    public static void getComponentStatus(String config, ApiCallback<ComponentStatus> cb) {
+        api().cgiGetAsBrowser("/admin/services/" + config + "/index_status", 10,
+                new ApiCallback<String>() {
+                    @Override
+                    public void onSuccess(String body) {
+                        cb.onSuccess(parseComponentStatus(body));
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+    }
+
+    static ComponentStatus parseComponentStatus(String body) {
+        ComponentStatus out = new ComponentStatus();
+        try {
+            JsonObject o = JsonParser.parseString(body).getAsJsonObject();
+            out.tcp = optBool(o, "tcp_status");
+            out.udp = optBool(o, "udp_status");
+            out.dns = optBool(o, "dns_mode_status");
+            if (o.has("haproxy_status") && o.get("haproxy_status").isJsonPrimitive()) {
+                try {
+                    out.haproxy = Integer.parseInt(
+                            o.get("haproxy_status").getAsString().trim());
+                } catch (NumberFormatException ignored) {
+                    out.haproxy = null;
+                }
+            }
+        } catch (Exception ignored) {
+            // 解析失败全部保持 null(未知)
+        }
+        return out;
+    }
+
+
+    // =====================================================================
+    // 连通性与 IP 检测
+    // 延迟走 LuCI 的 connect_status(服务端 curl,与状态页点我检测同一端点);
+    // 国内 IP 取 WAN 口地址(ubus),国外 IP 由手机经路由器 Socks 出口实测。
     // =====================================================================
 
     /** 检测结果;null = 该项没测通/不可用 */
@@ -373,32 +486,41 @@ public final class PasswallApi {
         public Integer googleMs;
         public String cnIp;
         public String globalIp;
-        /** file.exec 被 ACL 拒:整组检测不可用 */
-        public boolean execDenied;
     }
 
-    /**
-     * 四个 curl 并行跑:百度直连延迟、谷歌经节点 Socks 延迟、
-     * 国内出口 IP、经 Socks 的国外出口 IP。单项失败只影响单项。
-     */
-    public static void netCheck(String socksPort, ApiCallback<NetCheck> cb) {
+    public static void netCheck(String config, String socksPort, ApiCallback<NetCheck> cb) {
         NetCheck out = new NetCheck();
         java.util.concurrent.atomic.AtomicInteger remaining =
                 new java.util.concurrent.atomic.AtomicInteger(4);
         Runnable done = () -> {
             if (remaining.decrementAndGet() == 0) cb.onSuccess(out);
         };
-        String socks = "127.0.0.1:" + (socksPort == null || socksPort.isEmpty()
-                ? "1070" : socksPort);
-        curlTime(new String[]{"-o", "/dev/null", "-s", "-m", "6", "-w", "%{time_total}",
-                "https://www.baidu.com"}, out, ms -> out.baiduMs = ms, done);
-        curlTime(new String[]{"-o", "/dev/null", "-s", "-m", "6", "-w", "%{time_total}",
-                "--socks5-hostname", socks, "https://www.google.com/generate_204"},
-                out, ms -> out.googleMs = ms, done);
-        curlText(new String[]{"-s", "-m", "6", "http://members.3322.org/dyndns/getip"},
-                out, ip -> out.cnIp = ip, done);
-        curlText(new String[]{"-s", "-m", "6", "--socks5-hostname", socks,
-                "https://api.ipify.org"}, out, ip -> out.globalIp = ip, done);
+        connectDelay(config, "https://www.baidu.com/favicon.ico",
+                ms -> {
+                    out.baiduMs = ms;
+                    done.run();
+                });
+        connectDelay(config, "https://www.google.com/generate_204",
+                ms -> {
+                    out.googleMs = ms;
+                    done.run();
+                });
+        api().getNetworkInterfaceDump(new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                out.cnIp = parseWanIp(result);
+                done.run();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                done.run();
+            }
+        });
+        fetchGlobalIpViaSocks(socksPort, ip -> {
+            out.globalIp = ip;
+            done.run();
+        });
     }
 
     private interface IntSink {
@@ -409,64 +531,117 @@ public final class PasswallApi {
         void put(String v);
     }
 
-    private static void curlTime(String[] args, NetCheck out, IntSink sink, Runnable done) {
-        api().fileExec("curl", args, 12, new ApiCallback<JsonObject>() {
-            @Override
-            public void onSuccess(JsonObject result) {
-                sink.put(parseCurlSeconds(stdoutOf(result)));
-                done.run();
-            }
-
-            @Override
-            public void onFailure(ApiError error) {
-                markDenied(out, error);
-                done.run();
-            }
-        });
-    }
-
-    private static void curlText(String[] args, NetCheck out, StrSink sink, Runnable done) {
-        api().fileExec("curl", args, 12, new ApiCallback<JsonObject>() {
-            @Override
-            public void onSuccess(JsonObject result) {
-                String text = stdoutOf(result);
-                String ip = text == null ? "" : text.trim();
-                sink.put(ip.matches("[0-9a-fA-F.:]+") && !ip.isEmpty() ? ip : null);
-                done.run();
-            }
-
-            @Override
-            public void onFailure(ApiError error) {
-                markDenied(out, error);
-                done.run();
-            }
-        });
-    }
-
-    private static void markDenied(NetCheck out, ApiError error) {
-        if (error.getType() == ApiError.Type.PERMISSION_DENIED
-                || error.getType() == ApiError.Type.ACCESS_DENIED) {
-            out.execDenied = true;
-        }
-    }
-
-    private static String stdoutOf(JsonObject result) {
-        if (result == null || !result.has("stdout") || result.get("stdout").isJsonNull()) {
-            return null;
-        }
-        return result.get("stdout").getAsString();
-    }
-
-    /** curl -w %{time_total} 的秒数文本 → 毫秒;测不通(空/0)返回 null */
-    static Integer parseCurlSeconds(String text) {
-        if (text == null) return null;
+    /** LuCI connect_status:返回 JSON 的 use_time 是毫秒(字符串),空 = 不通 */
+    private static void connectDelay(String config, String url, IntSink sink) {
+        String encoded;
         try {
-            double sec = Double.parseDouble(text.trim());
-            if (sec <= 0) return null;
-            return (int) Math.round(sec * 1000);
-        } catch (NumberFormatException e) {
+            encoded = java.net.URLEncoder.encode(url, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            encoded = url;
+        }
+        String path = "/admin/services/" + config + "/connect_status?url=" + encoded;
+        api().cgiGetAsBrowser(path, 12, new ApiCallback<String>() {
+            @Override
+            public void onSuccess(String body) {
+                sink.put(parseUseTimeMs(body));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                sink.put(null);
+            }
+        });
+    }
+
+    static Integer parseUseTimeMs(String body) {
+        try {
+            JsonObject o = JsonParser.parseString(body).getAsJsonObject();
+            if (!o.has("use_time")) return null;
+            String text = o.get("use_time").getAsString().trim();
+            if (text.isEmpty()) return null;
+            double ms = Double.parseDouble(text);
+            return ms > 0 ? (int) Math.round(ms) : null;
+        } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 从 network.interface.dump 里挑默认路由接口的 IPv4(WAN 口地址) */
+    static String parseWanIp(JsonObject dump) {
+        try {
+            com.google.gson.JsonArray ifaces = dump.getAsJsonArray("interface");
+            if (ifaces == null) return null;
+            String fallback = null;
+            for (com.google.gson.JsonElement el : ifaces) {
+                if (!el.isJsonObject()) continue;
+                JsonObject o = el.getAsJsonObject();
+                String ip = firstIpv4(o);
+                if (ip == null) continue;
+                if (fallback == null && !"loopback".equals(str(o, "interface", ""))) {
+                    fallback = ip;
+                }
+                if (o.has("route") && o.get("route").isJsonArray()) {
+                    for (com.google.gson.JsonElement r : o.getAsJsonArray("route")) {
+                        if (r.isJsonObject() && "0.0.0.0".equals(
+                                str(r.getAsJsonObject(), "target", ""))) {
+                            return ip;
+                        }
+                    }
+                }
+            }
+            return fallback;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String firstIpv4(JsonObject iface) {
+        if (!iface.has("ipv4-address") || !iface.get("ipv4-address").isJsonArray()) {
+            return null;
+        }
+        com.google.gson.JsonArray arr = iface.getAsJsonArray("ipv4-address");
+        if (arr.size() == 0 || !arr.get(0).isJsonObject()) return null;
+        String ip = str(arr.get(0).getAsJsonObject(), "address", "");
+        return ip.isEmpty() ? null : ip;
+    }
+
+    /**
+     * 国外 IP:手机经路由器 Socks(节点出口)访问 ipify。
+     * Socks 只绑 localhost 时从手机连不上,返回 null(卡上显示 —)。
+     */
+    private static void fetchGlobalIpViaSocks(String socksPort, StrSink sink) {
+        String host = api().getHost();
+        int port;
+        try {
+            port = Integer.parseInt(socksPort == null || socksPort.isEmpty()
+                    ? "1070" : socksPort);
+        } catch (NumberFormatException e) {
+            port = 1070;
+        }
+        final int socksPortNum = port;
+        Thread thread = new Thread(() -> {
+            String ip = null;
+            try {
+                java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                        new java.net.InetSocketAddress(host, socksPortNum));
+                okhttp3.OkHttpClient client = api().clientWithTimeout(8)
+                        .newBuilder().proxy(proxy).build();
+                okhttp3.Request request = new okhttp3.Request.Builder()
+                        .url("https://api.ipify.org").build();
+                try (okhttp3.Response response = client.newCall(request).execute()) {
+                    String text = response.body() != null
+                            ? response.body().string().trim() : "";
+                    if (text.matches("[0-9a-fA-F.:]+")) ip = text;
+                }
+            } catch (Exception ignored) {
+                ip = null;
+            }
+            final String result = ip;
+            new android.os.Handler(android.os.Looper.getMainLooper())
+                    .post(() -> sink.put(result));
+        });
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /** 手动重启服务(用户点的按钮,结果如实回调) */

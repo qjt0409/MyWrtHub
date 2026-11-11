@@ -112,13 +112,48 @@ public class PasswallApiTest {
     }
 
     @Test
-    public void parseCurlSeconds_convertsAndRejects() {
-        assertEquals(Integer.valueOf(24), PasswallApi.parseCurlSeconds("0.024"));
-        assertEquals(Integer.valueOf(1500), PasswallApi.parseCurlSeconds(" 1.5 "));
-        assertNull(PasswallApi.parseCurlSeconds("0.000"));
-        assertNull(PasswallApi.parseCurlSeconds(""));
-        assertNull(PasswallApi.parseCurlSeconds(null));
-        assertNull(PasswallApi.parseCurlSeconds("abc"));
+    public void parseUseTimeMs_readsLuciConnectStatus() {
+        assertEquals(Integer.valueOf(37),
+                PasswallApi.parseUseTimeMs("{\"use_time\":\"36.51\",\"http_code\":204}"));
+        assertNull(PasswallApi.parseUseTimeMs("{\"use_time\":\"\"}"));
+        assertNull(PasswallApi.parseUseTimeMs("{\"use_time\":\"0.00\"}"));
+        assertNull(PasswallApi.parseUseTimeMs("{}"));
+        assertNull(PasswallApi.parseUseTimeMs("not json"));
+    }
+
+    @Test
+    public void parseComponentStatus_readsIndexStatus() {
+        PasswallApi.ComponentStatus c = PasswallApi.parseComponentStatus(
+                "{\"tcp_status\":true,\"udp_status\":false,"
+                        + "\"dns_mode_status\":true,\"haproxy_status\":\"0\"}");
+        assertEquals(Boolean.TRUE, c.tcp);
+        assertEquals(Boolean.FALSE, c.udp);
+        assertEquals(Boolean.TRUE, c.dns);
+        assertEquals(Integer.valueOf(0), c.haproxy);
+        // 缺项保持 null(未知),坏报文不抛
+        PasswallApi.ComponentStatus empty = PasswallApi.parseComponentStatus("{}");
+        assertNull(empty.tcp);
+        assertNull(empty.haproxy);
+        assertNull(PasswallApi.parseComponentStatus("junk").tcp);
+    }
+
+    @Test
+    public void parseSubscribeError_distinguishes() {
+        assertNull(PasswallApi.parseSubscribeError("{\"success\":true}"));
+        assertEquals("Please save first", PasswallApi.parseSubscribeError(
+                "{\"success\":false,\"msg\":\"Please save first\"}"));
+    }
+
+    @Test
+    public void parseWanIp_picksDefaultRouteInterface() {
+        JsonObject dump = JsonParser.parseString("{\"interface\":["
+                + "{\"interface\":\"lan\",\"ipv4-address\":[{\"address\":\"10.0.1.1\"}],"
+                + "\"route\":[{\"target\":\"10.0.1.0\",\"nexthop\":\"0.0.0.0\"}]},"
+                + "{\"interface\":\"wan\",\"ipv4-address\":[{\"address\":\"100.64.1.2\"}],"
+                + "\"route\":[{\"target\":\"0.0.0.0\",\"nexthop\":\"100.64.0.1\"}]}"
+                + "]}").getAsJsonObject();
+        assertEquals("100.64.1.2", PasswallApi.parseWanIp(dump));
+        assertNull(PasswallApi.parseWanIp(new JsonObject()));
     }
 
     @Test

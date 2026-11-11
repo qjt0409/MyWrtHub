@@ -6,6 +6,7 @@
 - **OpenAppFilter**：对接路由器上的 OpenAppFilter（appfilter），应用过滤与上网记录，功能点子来自 OPAssistant。
 - **终端页（1.1）**：底部「终端」页照 OPAssistant 复刻——fwx 实时上下行速率、今日流量与活跃时长、常用 App、3 秒刷新；点开有详情六页签（基本信息 / 管控规则 / App统计 / 今日流量 / 常用App / 应用记录）和「拉黑」（fwx 上网黑名单）。
 - **设备限速（1.1）**：对接固件实际装的 `luci-app-eqosplus`（不是老 eqos），按 IP / MAC / IP 段限速，单位 MB/s，带生效星期与时段；终端详情页可直接跳到对应设备的限速设置。
+- **1.6**：PassWall 三处改走 LuCI 网页版同款 CGI 接口（实机坐实 `file.exec` 在部分固件上被 rpcd ACL 拒，curl/lua 都跑不了）——网络监测改调 `connect_status`、订阅更新改调 `subscribe_manual(_all)`（服务端后台跑，点完即返回）；运行状态新增 **TCP / UDP / DNS / HAPROXY** 组件监测（`index_status`，查核心进程本身），主状态也以 TCP 组件为准（procd 的 service list 对 PassWall 报不准）；国内 IP 改取 WAN 口地址（ubus 接口 dump 的默认路由接口），国外 IP 改由手机经路由器 Socks 出口实测（Socks 只绑 localhost 时取不到，显示 —）。
 - **1.5**：PassWall / PassWall2 页按 LuCI 状态页布局重排——运行状态与主开关一行、节点选择卡、网络状态监测（国内百度 / 国外谷歌，路由器侧 curl 实测）、国内 / 国外 IP、订阅管理（订阅增删 + 调 `subscribe.lua` 更新，与网页版同一条命令）、节点列表按订阅分组显示；1.4 的代理设置与 DNS 卡移至页面下方。总览「下行 / 上行」卡数值改为**今日**流量（副行仍显示本月）。
 - **1.4**：PassWall / PassWall2 页按 LuCI 全局页 + 本 App 的 OpenClash 页改版——大状态块、快捷模式（GFW/大陆白名单/全局/回国，即网页版的四组键值组合）、TCP/UDP 代理、大陆列表、GFW/本机/局域网开关、DNS 分流/过滤模式/远程 DNS，配置里没有的键整行隐藏（PassWall2 天然只剩三项）；总览指标新增「总下行/总上行」两卡（数据为 wanstats 已存月份累计，副行显示本月，老配置一次性默认开启）。
 - **1.3**：修复切到 HTTPS 设备时白屏闪退——首页 onResume 在主线程调 `resetSessionIfStale()` 清连接池，关闭 TLS 连接要写 close_notify，被 StrictMode 判 `NetworkOnMainThreadException`（明文 HTTP 关闭不写应用层数据，所以只炸 HTTPS），已改为后台线程清理；同时改用正式签名发布（keystore 不进仓库，CI 从 Secrets 注入，见 `docs/build.yml`），签名变更后首次安装需先卸载旧版，之后可直接覆盖更新。

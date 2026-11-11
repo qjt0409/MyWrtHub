@@ -43,6 +43,8 @@ public class PasswallActivity extends AppCompatActivity {
     private MaterialButton btnRestart, btnRefresh;
     private SwitchMaterial mainSwitch;
     private TextView pickName, pickMeta, checkCnValue, checkGValue, ipCnValue, ipGValue;
+    private TextView compTcp, compUdp, compDns, compHaproxy;
+    private PasswallApi.ComponentStatus compStatus;
     private LinearLayout subRows;
     private TextView subEmpty;
     private NestedScrollView scrollView;
@@ -98,6 +100,10 @@ public class PasswallActivity extends AppCompatActivity {
         checkGValue = findViewById(R.id.pw_check_g_value);
         ipCnValue = findViewById(R.id.pw_ip_cn_value);
         ipGValue = findViewById(R.id.pw_ip_g_value);
+        compTcp = findViewById(R.id.pw_comp_tcp);
+        compUdp = findViewById(R.id.pw_comp_udp);
+        compDns = findViewById(R.id.pw_comp_dns);
+        compHaproxy = findViewById(R.id.pw_comp_haproxy);
         subRows = findViewById(R.id.pw_sub_rows);
         subEmpty = findViewById(R.id.pw_sub_empty);
         scrollView = findViewById(R.id.pw_scroll);
@@ -137,7 +143,7 @@ public class PasswallActivity extends AppCompatActivity {
         });
         findViewById(R.id.pw_sub_update_all).setOnClickListener(v -> {
             if (!busy && settings != null && !settings.subscriptions.isEmpty()) {
-                updateAllSubscriptions(0);
+                updateAllSubscriptions();
             }
         });
 
@@ -228,6 +234,56 @@ public class PasswallActivity extends AppCompatActivity {
                 renderState();
             }
         });
+        // 组件状态以 LuCI 状态页的 index_status 为准(查的是核心进程本身,
+        // procd 的 service list 在 PassWall 上报不准)
+        PasswallApi.getComponentStatus(pwConfig(),
+                new ApiCallback<PasswallApi.ComponentStatus>() {
+                    @Override
+                    public void onSuccess(PasswallApi.ComponentStatus result) {
+                        if (isFinishing() || isDestroyed()) return;
+                        compStatus = result;
+                        renderState();
+                        renderComponents();
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        // 拿不到就保持 — 显示
+                    }
+                });
+    }
+
+    private void renderComponents() {
+        if (compStatus == null) return;
+        setCompText(compTcp, compStatus.tcp);
+        setCompText(compUdp, compStatus.udp);
+        setCompText(compDns, compStatus.dns);
+        if (compStatus.haproxy == null) {
+            compHaproxy.setText("—");
+            compHaproxy.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
+        } else if (compStatus.haproxy == -1) {
+            compHaproxy.setText(R.string.pw_comp_absent);
+            compHaproxy.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
+        } else if (compStatus.haproxy == 0) {
+            compHaproxy.setText(R.string.pw_state_running);
+            compHaproxy.setTextColor(ContextCompat.getColor(this, R.color.ios_green));
+        } else {
+            compHaproxy.setText(R.string.pw_comp_stopped);
+            compHaproxy.setTextColor(ContextCompat.getColor(this, R.color.ios_red));
+        }
+    }
+
+    private void setCompText(TextView view, Boolean runningState) {
+        if (runningState == null) {
+            view.setText("—");
+            view.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
+        } else if (runningState) {
+            view.setText(R.string.pw_state_running);
+            view.setTextColor(ContextCompat.getColor(this, R.color.ios_green));
+        } else {
+            view.setText(R.string.pw_comp_stopped);
+            view.setTextColor(ContextCompat.getColor(this, R.color.ios_red));
+        }
     }
 
     private void render() {
@@ -312,10 +368,12 @@ public class PasswallActivity extends AppCompatActivity {
         return visible;
     }
 
-    /** 运行状态点/文字 + 主开关(依赖 enabled 与进程状态两个来源) */
+    /** 运行状态点/文字 + 主开关(TCP 组件状态优先,缺失时用 procd 状态兜底) */
     private void renderState() {
         if (settings == null) return;
-        boolean isRunning = Boolean.TRUE.equals(running);
+        Boolean effective = compStatus != null && compStatus.tcp != null
+                ? compStatus.tcp : running;
+        boolean isRunning = Boolean.TRUE.equals(effective);
         if (isRunning) {
             statusDot.setBackgroundResource(R.drawable.dot_green);
             statusText.setText(R.string.pw_state_running);
@@ -324,7 +382,7 @@ public class PasswallActivity extends AppCompatActivity {
             statusDot.setBackgroundResource(R.drawable.dot_gray);
             statusText.setText(R.string.pw_state_disabled);
             statusText.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
-        } else if (running == null) {
+        } else if (effective == null) {
             statusDot.setBackgroundResource(R.drawable.dot_gray);
             statusText.setText(R.string.pw_state_unknown);
             statusText.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
@@ -674,16 +732,11 @@ public class PasswallActivity extends AppCompatActivity {
         checkRunning = true;
         checkCnValue.setText(R.string.pw_check_running);
         checkGValue.setText(R.string.pw_check_running);
-        PasswallApi.netCheck(settings.socksPort, new ApiCallback<PasswallApi.NetCheck>() {
+        PasswallApi.netCheck(pwConfig(), settings.socksPort, new ApiCallback<PasswallApi.NetCheck>() {
             @Override
             public void onSuccess(PasswallApi.NetCheck result) {
                 if (isFinishing() || isDestroyed()) return;
                 checkRunning = false;
-                if (result.execDenied) {
-                    checkCnValue.setText(R.string.pw_check_denied);
-                    checkGValue.setText(R.string.pw_check_denied);
-                    return;
-                }
                 checkCnValue.setText(result.baiduMs != null
                         ? result.baiduMs + " ms" : getString(R.string.pw_check_fail));
                 checkGValue.setText(result.googleMs != null
@@ -809,13 +862,16 @@ public class PasswallActivity extends AppCompatActivity {
     private void updateSubscription(PasswallApi.Subscription sub) {
         setBusy(true);
         toast(getString(R.string.pw_sub_updating));
-        PasswallApi.updateSubscription(pwConfig(), sub.section, new ApiCallback<Boolean>() {
+        PasswallApi.updateSubscription(pwConfig(), sub.section, sub.url, new ApiCallback<Boolean>() {
             @Override
             public void onSuccess(Boolean ok) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
-                toast(getString(R.string.pw_sub_updated));
-                load();
+                toast(getString(R.string.pw_sub_triggered));
+                // 服务端后台更新要一会儿,延迟重拉一次节点列表
+                swipeRefresh.postDelayed(() -> {
+                    if (!isFinishing() && !isDestroyed()) load();
+                }, 5000);
             }
 
             @Override
@@ -827,37 +883,30 @@ public class PasswallActivity extends AppCompatActivity {
         });
     }
 
-    /** 全部更新:逐条顺序跑,一条失败不拦后面的 */
-    private void updateAllSubscriptions(int index) {
-        if (settings == null || index >= settings.subscriptions.size()) {
-            if (index > 0) load();
-            return;
-        }
-        PasswallApi.Subscription sub = settings.subscriptions.get(index);
-        if (index == 0) {
-            setBusy(true);
-            toast(getString(R.string.pw_sub_updating));
-        }
-        PasswallApi.updateSubscription(pwConfig(), sub.section, new ApiCallback<Boolean>() {
-            @Override
-            public void onSuccess(Boolean ok) {
-                if (isFinishing() || isDestroyed()) return;
-                if (index + 1 >= settings.subscriptions.size()) {
-                    setBusy(false);
-                    toast(getString(R.string.pw_sub_updated));
-                }
-                updateAllSubscriptions(index + 1);
-            }
+    /** 全部更新:LuCI 的 subscribe_manual_all 一次触发(服务端后台跑) */
+    private void updateAllSubscriptions() {
+        if (settings == null || settings.subscriptions.isEmpty()) return;
+        setBusy(true);
+        toast(getString(R.string.pw_sub_updating));
+        PasswallApi.updateAllSubscriptions(pwConfig(), settings.subscriptions,
+                new ApiCallback<Boolean>() {
+                    @Override
+                    public void onSuccess(Boolean ok) {
+                        if (isFinishing() || isDestroyed()) return;
+                        setBusy(false);
+                        toast(getString(R.string.pw_sub_triggered));
+                        // 服务端后台更新要一会儿,延迟重拉一次节点列表
+                        swipeRefresh.postDelayed(() -> {
+                            if (!isFinishing() && !isDestroyed()) load();
+                        }, 5000);
+                    }
 
-            @Override
-            public void onFailure(ApiError error) {
-                if (isFinishing() || isDestroyed()) return;
-                if (index + 1 >= settings.subscriptions.size()) {
-                    setBusy(false);
-                    toast(getString(R.string.pw_sub_update_failed, error.getMessage()));
-                }
-                updateAllSubscriptions(index + 1);
-            }
-        });
+                    @Override
+                    public void onFailure(ApiError error) {
+                        if (isFinishing() || isDestroyed()) return;
+                        setBusy(false);
+                        toast(getString(R.string.pw_sub_update_failed, error.getMessage()));
+                    }
+                });
     }
 }
