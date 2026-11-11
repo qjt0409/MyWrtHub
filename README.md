@@ -6,6 +6,7 @@
 - **OpenAppFilter**：对接路由器上的 OpenAppFilter（appfilter），应用过滤与上网记录，功能点子来自 OPAssistant。
 - **终端页（1.1）**：底部「终端」页照 OPAssistant 复刻——fwx 实时上下行速率、今日流量与活跃时长、常用 App、3 秒刷新；点开有详情六页签（基本信息 / 管控规则 / App统计 / 今日流量 / 常用App / 应用记录）和「拉黑」（fwx 上网黑名单）。
 - **设备限速（1.1）**：对接固件实际装的 `luci-app-eqosplus`（不是老 eqos），按 IP / MAC / IP 段限速，单位 MB/s，带生效星期与时段；终端详情页可直接跳到对应设备的限速设置。
+- **1.4**：PassWall / PassWall2 页按 LuCI 全局页 + 本 App 的 OpenClash 页改版——大状态块、快捷模式（GFW/大陆白名单/全局/回国，即网页版的四组键值组合）、TCP/UDP 代理、大陆列表、GFW/本机/局域网开关、DNS 分流/过滤模式/远程 DNS，配置里没有的键整行隐藏（PassWall2 天然只剩三项）；总览指标新增「总下行/总上行」两卡（数据为 wanstats 已存月份累计，副行显示本月，老配置一次性默认开启）。
 - **1.3**：修复切到 HTTPS 设备时白屏闪退——首页 onResume 在主线程调 `resetSessionIfStale()` 清连接池，关闭 TLS 连接要写 close_notify，被 StrictMode 判 `NetworkOnMainThreadException`（明文 HTTP 关闭不写应用层数据，所以只炸 HTTPS），已改为后台线程清理；同时改用正式签名发布（keystore 不进仓库，CI 从 Secrets 注入，见 `docs/build.yml`），签名变更后首次安装需先卸载旧版，之后可直接覆盖更新。
 - **PassWall（1.2）**：服务页新增 PassWall 与 PassWall2——运行状态与总开关、当前节点、节点列表点选切换、重启服务，走 UCI `passwall` / `passwall2`（全局段 `enabled`/`node` + `nodes` 段），与 LuCI 同源。1.2 同时修复 HTTPS 下 LuCI 会话 cookie 名（`sysauth_https`）未识别导致 CGI 类功能失效的问题，并内置崩溃记录器（闪退后重开 App 可查看并复制上次的崩溃堆栈）。
 

@@ -1,1 +1,1 @@
-{"downloadUrl":"https://github.com/qjt0409/MyWrtHub/releases","forceUpdate":false,"updateMessage":"1.3:修复切到 HTTPS 设备白屏闪退(主线程关闭 TLS 连接触发 NetworkOnMainThreadException,已改后台线程);改用正式签名(首次需卸载旧版再装,之后可直接覆盖更新)。","versionCode":4,"versionName":"1.3"}
+{"downloadUrl":"https://github.com/qjt0409/MyWrtHub/releases","forceUpdate":false,"updateMessage":"1.4:PassWall/PassWall2 页改版(仿 OpenClash 页与 LuCI:快捷模式、TCP/UDP、大陆/GFW 列表、DNS 分流与远程 DNS);总览新增总下行/总上行卡(wanstats 累计,副行本月)。含 1.3 的 HTTPS 闪退修复与正式签名。","versionCode":5,"versionName":"1.4"}

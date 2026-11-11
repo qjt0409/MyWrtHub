@@ -4,6 +4,7 @@ import com.whykangkang.wrthub.api.ApiCallback;
 import com.whykangkang.wrthub.api.ApiError;
 import com.whykangkang.wrthub.api.OpenWrtApi;
 import com.whykangkang.wrthub.api.RouterApi;
+import com.whykangkang.wrthub.api.WanstatsApi;
 import com.whykangkang.wrthub.model.ConnectedDevice;
 import com.whykangkang.wrthub.model.ConnectionTracking;
 import com.whykangkang.wrthub.model.NetworkDevice;
@@ -18,7 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 首页数据聚合加载器,对应 iOS DashboardViewController.performLoadData 的 DispatchGroup。
- * 并发拉取 7 个数据源,全部返回(成功或失败)后回调一次。
+ * 并发拉取 8 个数据源,全部返回(成功或失败)后回调一次。
  * 网速靠 WAN 字节差分,故 loader 在多次刷新间保持采样状态。
  */
 public class DashboardLoader {
@@ -42,7 +43,7 @@ public class DashboardLoader {
 
     public void load(Listener listener) {
         final DashboardData data = new DashboardData();
-        final AtomicInteger remaining = new AtomicInteger(7);
+        final AtomicInteger remaining = new AtomicInteger(8);
         final Runnable done = () -> {
             if (remaining.decrementAndGet() == 0) {
                 // 网速须在回调前算好(卡片重建时直接取值)
@@ -131,6 +132,32 @@ public class DashboardLoader {
 
             @Override
             public void onFailure(ApiError error) {
+                done.run();
+            }
+        });
+
+        // WAN 总量卡的数据:自家 wanstats 的月度表(累计求和 + 本月)
+        WanstatsApi.loadHistory(new ApiCallback<WanstatsApi.History>() {
+            @Override
+            public void onSuccess(WanstatsApi.History result) {
+                if (!result.monthly.isEmpty()) {
+                    long totalRx = 0, totalTx = 0;
+                    for (WanstatsApi.Entry e : result.monthly) {
+                        totalRx += e.rx;
+                        totalTx += e.tx;
+                    }
+                    data.wanTotalRx = totalRx;
+                    data.wanTotalTx = totalTx;
+                    // monthly 最近在前,第一个就是本月
+                    data.wanMonthRx = result.monthly.get(0).rx;
+                    data.wanMonthTx = result.monthly.get(0).tx;
+                }
+                done.run();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                // 没有 wanstats 的路由器:总量卡不出,不算首页错误
                 done.run();
             }
         });

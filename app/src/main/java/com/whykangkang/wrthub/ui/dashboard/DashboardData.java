@@ -27,6 +27,13 @@ public class DashboardData {
     public Double wanDownSpeed;
     public Double wanUpSpeed;
 
+    /** wanstats 的 WAN 总量(字节):累计 = 已保存月份求和;本月 = 最近一个月。
+     *  null 表示这台路由器没有 wanstats 数据(卡片不出) */
+    public Long wanTotalRx;
+    public Long wanTotalTx;
+    public Long wanMonthRx;
+    public Long wanMonthTx;
+
     /** 本轮是否出过错(用于是否记评分 engagement) */
     public boolean hadError;
 }

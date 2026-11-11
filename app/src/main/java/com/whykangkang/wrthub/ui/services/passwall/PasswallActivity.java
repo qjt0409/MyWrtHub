@@ -1,15 +1,22 @@
 package com.whykangkang.wrthub.ui.services.passwall;
 
+import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.whykangkang.wrthub.R;
 import com.whykangkang.wrthub.api.ApiCallback;
@@ -17,25 +24,38 @@ import com.whykangkang.wrthub.api.ApiError;
 import com.whykangkang.wrthub.api.PasswallApi;
 import com.whykangkang.wrthub.model.PasswallNode;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
- * PassWall:总开关、运行状态、当前节点、节点点选切换、重启服务。
- * 数据与 LuCI 同源(uci passwall),改完 apply + 重启服务生效。
+ * PassWall / PassWall2 全局页:仿 LuCI 全局页 + App 内 OpenClash 页排版。
+ *
+ * 状态卡(大状态块、快捷模式、启停/重启/刷新)、节点卡(点选切换)、
+ * 代理设置卡(TCP/UDP 模式、大陆列表、GFW/本机/局域网开关)、
+ * DNS 卡(分流、过滤模式、远程 DNS)。数据与 LuCI 同源(uci),
+ * 改完 apply + 重启服务生效。配置里没有的键整行隐藏 —— PassWall2
+ * 是分流节点模型,只有本机/局域网/远程 DNS 三项,天然降级。
  */
 public class PasswallActivity extends AppCompatActivity {
 
-    private TextView stateLabel, currentNodeLabel, emptyLabel;
-    private SwitchMaterial enabledSwitch;
+    private TextView statusText, currentNodeLabel, emptyLabel, modeCustomLabel;
+    private View statusDot;
+    private View statusSpinner;
+    private MaterialButton btnToggle, btnRestart, btnRefresh;
+    private MaterialButtonToggleGroup modeGroup, segTcp, segUdp, segChn;
+    private SwitchMaterial swGfw, swLocalhost, swClient;
     private LinearLayout nodeRows;
+    private TextView dnsShuntValue, dnsModeValue, remoteDnsValue;
     private SwipeRefreshLayout swipeRefresh;
 
     private PasswallApi.PwSettings settings;
     private Boolean running;
-    /** 正在写配置时锁住开关与节点列表,防连点 */
+    /** 正在写配置时锁住全部控件,防连点 */
     private boolean busy;
-    /** 程序给开关赋值时别触发写回 */
-    private boolean renderingSwitch;
+    /** 程序回填控件值时别触发写回 */
+    private boolean rendering;
 
-    /** 配置名(passwall);PassWall2 子类覆写为 passwall2(两者结构同构) */
+    /** 配置名(passwall);PassWall2 子类覆写为 passwall2 */
     protected String pwConfig() {
         return PasswallApi.CONFIG;
     }
@@ -54,40 +74,100 @@ public class PasswallActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_passwall);
         ((TextView) findViewById(R.id.pw_title)).setText(pwTitleRes());
+        ((TextView) findViewById(R.id.pw_card_name)).setText(pwTitleRes());
 
-        stateLabel = findViewById(R.id.pw_state);
+        statusText = findViewById(R.id.pw_status_text);
+        statusDot = findViewById(R.id.pw_status_dot);
+        statusSpinner = findViewById(R.id.pw_status_spinner);
         currentNodeLabel = findViewById(R.id.pw_current_node);
         emptyLabel = findViewById(R.id.pw_empty);
-        enabledSwitch = findViewById(R.id.pw_enabled_switch);
+        modeCustomLabel = findViewById(R.id.pw_mode_custom);
         nodeRows = findViewById(R.id.pw_node_rows);
+        btnToggle = findViewById(R.id.pw_btn_toggle);
+        btnRestart = findViewById(R.id.pw_btn_restart);
+        btnRefresh = findViewById(R.id.pw_btn_refresh);
+        modeGroup = findViewById(R.id.pw_mode_group);
+        segTcp = findViewById(R.id.pw_seg_tcp);
+        segUdp = findViewById(R.id.pw_seg_udp);
+        segChn = findViewById(R.id.pw_seg_chn);
+        swGfw = findViewById(R.id.pw_sw_gfw);
+        swLocalhost = findViewById(R.id.pw_sw_localhost);
+        swClient = findViewById(R.id.pw_sw_client);
+        dnsShuntValue = findViewById(R.id.pw_dns_shunt_value);
+        dnsModeValue = findViewById(R.id.pw_dns_mode_value);
+        remoteDnsValue = findViewById(R.id.pw_remote_dns_value);
         swipeRefresh = findViewById(R.id.swipe_refresh);
-
         swipeRefresh.setOnRefreshListener(this::load);
-        enabledSwitch.setOnCheckedChangeListener((button, checked) -> {
-            if (renderingSwitch || settings == null) return;
-            setEnabled(checked);
-        });
-        findViewById(R.id.pw_restart).setOnClickListener(v -> restartService());
-    }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
+        btnToggle.setOnClickListener(v -> {
+            if (settings != null && !busy) toggleEnabled();
+        });
+        btnRestart.setOnClickListener(v -> {
+            if (!busy) restartService();
+        });
+        btnRefresh.setOnClickListener(v -> {
+            if (!busy) load();
+        });
+
+        modeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (rendering || busy || !isChecked || settings == null) return;
+            PasswallApi.QuickMode mode = quickModeForButton(checkedId);
+            if (mode != null) applyQuickMode(mode);
+        });
+        segTcp.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (rendering || busy || !isChecked || settings == null) return;
+            writeOption("tcp_proxy_mode",
+                    checkedId == R.id.pw_tcp_proxy ? "proxy" : "disable");
+        });
+        segUdp.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (rendering || busy || !isChecked || settings == null) return;
+            writeOption("udp_proxy_mode",
+                    checkedId == R.id.pw_udp_proxy ? "proxy" : "disable");
+        });
+        segChn.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (rendering || busy || !isChecked || settings == null) return;
+            String value = checkedId == R.id.pw_chn_direct ? "direct"
+                    : checkedId == R.id.pw_chn_proxy ? "proxy" : "0";
+            writeOption("chn_list", value);
+        });
+        swGfw.setOnCheckedChangeListener((v, checked) -> {
+            if (rendering || busy || settings == null) return;
+            writeOption("use_gfw_list", checked ? "1" : "0");
+        });
+        swLocalhost.setOnCheckedChangeListener((v, checked) -> {
+            if (rendering || busy || settings == null) return;
+            writeOption("localhost_proxy", checked ? "1" : "0");
+        });
+        swClient.setOnCheckedChangeListener((v, checked) -> {
+            if (rendering || busy || settings == null) return;
+            writeOption("client_proxy", checked ? "1" : "0");
+        });
+
+        findViewById(R.id.pw_row_dns_shunt).setOnClickListener(v -> {
+            if (settings != null && !busy) pickDnsShunt();
+        });
+        findViewById(R.id.pw_row_dns_mode).setOnClickListener(v -> {
+            if (settings != null && !busy) pickDnsMode();
+        });
+        findViewById(R.id.pw_row_remote_dns).setOnClickListener(v -> {
+            if (settings != null && !busy) editRemoteDns();
+        });
+
         load();
     }
 
     // =====================================================================
-    // 载入
+    // 加载与渲染
     // =====================================================================
 
     private void load() {
         swipeRefresh.setRefreshing(true);
         PasswallApi.getSettings(pwConfig(), new ApiCallback<PasswallApi.PwSettings>() {
             @Override
-            public void onSuccess(PasswallApi.PwSettings value) {
+            public void onSuccess(PasswallApi.PwSettings result) {
                 if (isFinishing() || isDestroyed()) return;
                 swipeRefresh.setRefreshing(false);
-                settings = value;
+                settings = result;
                 render();
             }
 
@@ -95,8 +175,6 @@ public class PasswallActivity extends AppCompatActivity {
             public void onFailure(ApiError error) {
                 if (isFinishing() || isDestroyed()) return;
                 swipeRefresh.setRefreshing(false);
-                settings = null;
-                render();
                 showEmpty(error.getType() == ApiError.Type.PERMISSION_DENIED
                                 || error.getType() == ApiError.Type.CONFIG_NOT_FOUND
                         ? getString(R.string.pw_not_installed, pwName())
@@ -105,9 +183,9 @@ public class PasswallActivity extends AppCompatActivity {
         });
         PasswallApi.serviceRunning(pwConfig(), new ApiCallback<Boolean>() {
             @Override
-            public void onSuccess(Boolean value) {
+            public void onSuccess(Boolean result) {
                 if (isFinishing() || isDestroyed()) return;
-                running = value;
+                running = result;
                 renderState();
             }
 
@@ -120,130 +198,178 @@ public class PasswallActivity extends AppCompatActivity {
         });
     }
 
-    // =====================================================================
-    // 渲染
-    // =====================================================================
-
     private void render() {
-        renderState();
-        renderingSwitch = true;
-        enabledSwitch.setChecked(settings != null && settings.enabled);
-        renderingSwitch = false;
-        enabledSwitch.setEnabled(settings != null && !busy);
-
-        nodeRows.removeAllViews();
         if (settings == null) return;
+        rendering = true;
+        renderState();
+
+        PasswallNode current = settings.currentNode();
+        currentNodeLabel.setText(current != null ? current.displayName()
+                : getString(R.string.pw_no_node_selected));
+
+        // 快捷模式(PassWall 才有这组键)
+        boolean hasMode = settings.tcpProxyMode != null;
+        findViewById(R.id.pw_mode_row).setVisibility(hasMode ? View.VISIBLE : View.GONE);
+        PasswallApi.QuickMode qm = PasswallApi.quickModeOf(settings);
+        modeCustomLabel.setVisibility(hasMode && qm == PasswallApi.QuickMode.CUSTOM
+                ? View.VISIBLE : View.GONE);
+        int modeButton = qm == PasswallApi.QuickMode.GFW ? R.id.pw_mode_gfw
+                : qm == PasswallApi.QuickMode.CHNROUTE ? R.id.pw_mode_chn
+                : qm == PasswallApi.QuickMode.GLOBAL ? R.id.pw_mode_global
+                : qm == PasswallApi.QuickMode.RETURNHOME ? R.id.pw_mode_return : -1;
+        if (modeButton != -1) {
+            modeGroup.check(modeButton);
+        } else {
+            modeGroup.clearChecked();
+        }
+
+        // 代理设置卡:没有对应键的行整行隐藏,一行不剩时整卡隐藏
+        boolean anySettingsRow = false;
+        anySettingsRow |= rowVisible(R.id.pw_row_tcp, settings.tcpProxyMode != null);
+        anySettingsRow |= rowVisible(R.id.pw_row_udp, settings.udpProxyMode != null);
+        anySettingsRow |= rowVisible(R.id.pw_row_chn, settings.chnList != null);
+        anySettingsRow |= rowVisible(R.id.pw_row_gfw, settings.useGfwList != null);
+        anySettingsRow |= rowVisible(R.id.pw_row_localhost, settings.localhostProxy != null);
+        anySettingsRow |= rowVisible(R.id.pw_row_client, settings.clientProxy != null);
+        findViewById(R.id.pw_settings_card).setVisibility(
+                anySettingsRow ? View.VISIBLE : View.GONE);
+        findViewById(R.id.pw_settings_header).setVisibility(
+                anySettingsRow ? View.VISIBLE : View.GONE);
+        if (settings.tcpProxyMode != null) {
+            segTcp.check("proxy".equals(settings.tcpProxyMode)
+                    ? R.id.pw_tcp_proxy : R.id.pw_tcp_disable);
+        }
+        if (settings.udpProxyMode != null) {
+            segUdp.check("proxy".equals(settings.udpProxyMode)
+                    ? R.id.pw_udp_proxy : R.id.pw_udp_disable);
+        }
+        if (settings.chnList != null) {
+            segChn.check("direct".equals(settings.chnList) ? R.id.pw_chn_direct
+                    : "proxy".equals(settings.chnList) ? R.id.pw_chn_proxy : R.id.pw_chn_off);
+        }
+        if (settings.useGfwList != null) swGfw.setChecked(settings.useGfwList);
+        if (settings.localhostProxy != null) swLocalhost.setChecked(settings.localhostProxy);
+        if (settings.clientProxy != null) swClient.setChecked(settings.clientProxy);
+
+        // DNS 卡
+        boolean anyDnsRow = false;
+        anyDnsRow |= rowVisible(R.id.pw_row_dns_shunt, settings.dnsShunt != null);
+        anyDnsRow |= rowVisible(R.id.pw_row_dns_mode, settings.dnsMode != null);
+        anyDnsRow |= rowVisible(R.id.pw_row_remote_dns, settings.remoteDns != null);
+        findViewById(R.id.pw_dns_card).setVisibility(anyDnsRow ? View.VISIBLE : View.GONE);
+        findViewById(R.id.pw_dns_header).setVisibility(anyDnsRow ? View.VISIBLE : View.GONE);
+        dnsShuntValue.setText(dnsShuntLabel(settings.dnsShunt));
+        dnsModeValue.setText(dnsModeLabel(settings.dnsMode));
+        remoteDnsValue.setText(settings.remoteDns == null
+                ? getString(R.string.pw_not_set) : settings.remoteDns);
+
+        renderNodes();
+        rendering = false;
+    }
+
+    private boolean rowVisible(int rowId, boolean visible) {
+        findViewById(rowId).setVisibility(visible ? View.VISIBLE : View.GONE);
+        return visible;
+    }
+
+    /** 大状态块 + 启停按钮(依赖 enabled 与进程状态两个来源) */
+    private void renderState() {
+        if (settings == null) return;
+        boolean isRunning = Boolean.TRUE.equals(running);
+        if (isRunning) {
+            statusDot.setBackgroundResource(R.drawable.dot_green);
+            statusText.setText(R.string.pw_state_running);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.ios_green));
+        } else if (!settings.enabled) {
+            statusDot.setBackgroundResource(R.drawable.dot_gray);
+            statusText.setText(R.string.pw_state_disabled);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
+        } else if (running == null) {
+            statusDot.setBackgroundResource(R.drawable.dot_gray);
+            statusText.setText(R.string.pw_state_unknown);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.label_secondary));
+        } else {
+            statusDot.setBackgroundResource(R.drawable.dot_red);
+            statusText.setText(R.string.pw_state_stopped_big);
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.ios_red));
+        }
+        btnToggle.setText(settings.enabled ? R.string.proxy_stop : R.string.proxy_start);
+        btnToggle.setIconResource(settings.enabled ? R.drawable.ic_stop : R.drawable.ic_play);
+        btnToggle.setBackgroundTintList(ColorStateList.valueOf(ContextCompat.getColor(this,
+                settings.enabled ? R.color.ios_red : R.color.ios_green)));
+        btnRestart.setEnabled(settings.enabled && !busy);
+    }
+
+    private void renderNodes() {
+        nodeRows.removeAllViews();
         if (settings.nodes.isEmpty()) {
             showEmpty(getString(R.string.pw_no_nodes, pwName()));
             return;
         }
         emptyLabel.setVisibility(View.GONE);
-        for (int i = 0; i < settings.nodes.size(); i++) {
-            PasswallNode node = settings.nodes.get(i);
-            nodeRows.addView(nodeRow(node, node.section.equals(settings.nodeId)));
-            if (i < settings.nodes.size() - 1) nodeRows.addView(divider());
+        for (PasswallNode node : settings.nodes) {
+            View row = getLayoutInflater().inflate(
+                    R.layout.item_passwall_node, nodeRows, false);
+            TextView name = row.findViewById(R.id.pwn_name);
+            TextView meta = row.findViewById(R.id.pwn_meta);
+            TextView mark = row.findViewById(R.id.pwn_current);
+            android.widget.RadioButton radio = row.findViewById(R.id.pwn_radio);
+            boolean isCurrent = node.section.equals(settings.nodeId);
+            name.setText(node.displayName());
+            String metaText = node.subtitle();
+            meta.setText(metaText);
+            meta.setVisibility(metaText.isEmpty() ? View.GONE : View.VISIBLE);
+            mark.setVisibility(isCurrent ? View.VISIBLE : View.GONE);
+            radio.setChecked(isCurrent);
+            row.setOnClickListener(v -> {
+                if (busy || isCurrent) return;
+                switchNode(node);
+            });
+            radio.setOnClickListener(v -> {
+                if (busy || isCurrent) return;
+                switchNode(node);
+            });
+            row.setEnabled(!busy);
+            nodeRows.addView(row);
         }
     }
 
-    private void renderState() {
-        if (settings == null) {
-            stateLabel.setText(R.string.pw_state_unknown);
-            currentNodeLabel.setText("");
-            return;
-        }
-        if (!settings.enabled) {
-            stateLabel.setText(R.string.pw_state_disabled);
-        } else if (running == null) {
-            stateLabel.setText(R.string.pw_state_unknown);
-        } else {
-            stateLabel.setText(running ? R.string.pw_state_running : R.string.pw_state_stopped);
-        }
-        PasswallNode current = settings.currentNode();
-        currentNodeLabel.setText(current != null
-                ? getString(R.string.pw_current_node, current.displayName())
-                : getString(R.string.pw_current_node, getString(R.string.pw_no_node_selected)));
-    }
-
-    private View nodeRow(PasswallNode node, boolean current) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.setClickable(true);
-        row.setFocusable(true);
-        row.setEnabled(!busy);
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        texts.setLayoutParams(new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView name = new TextView(this);
-        name.setText(node.displayName());
-        name.setTextColor(getColor(R.color.label_primary));
-        name.setTextSize(15);
-        texts.addView(name);
-
-        String sub = node.subtitle();
-        if (!sub.isEmpty()) {
-            TextView subtitle = new TextView(this);
-            subtitle.setText(sub);
-            subtitle.setTextColor(getColor(R.color.label_secondary));
-            subtitle.setTextSize(12);
-            texts.addView(subtitle);
-        }
-        row.addView(texts);
-
-        if (current) {
-            TextView mark = new TextView(this);
-            mark.setText(R.string.pw_current_mark);
-            mark.setTextColor(getColor(R.color.ios_blue));
-            mark.setTextSize(14);
-            row.addView(mark);
-        }
-
-        row.setOnClickListener(v -> {
-            if (!node.section.equals(settings.nodeId)) switchNode(node);
-        });
-        return row;
-    }
-
-    private View divider() {
-        View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1));
-        v.setBackgroundColor(getColor(R.color.separator));
-        return v;
-    }
-
-    private void showEmpty(String text) {
-        emptyLabel.setText(text);
+    private void showEmpty(String message) {
+        nodeRows.removeAllViews();
+        emptyLabel.setText(message);
         emptyLabel.setVisibility(View.VISIBLE);
     }
 
-    private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
     // =====================================================================
-    // 操作
+    // 写操作
     // =====================================================================
 
     private void setBusy(boolean value) {
         busy = value;
-        enabledSwitch.setEnabled(settings != null && !value);
-        render();
+        statusSpinner.setVisibility(value ? View.VISIBLE : View.GONE);
+        btnToggle.setEnabled(!value);
+        btnRefresh.setEnabled(!value);
+        modeGroup.setEnabled(!value);
+        segTcp.setEnabled(!value);
+        segUdp.setEnabled(!value);
+        segChn.setEnabled(!value);
+        swGfw.setEnabled(!value);
+        swLocalhost.setEnabled(!value);
+        swClient.setEnabled(!value);
+        renderState();
+        if (settings != null) renderNodes();
     }
 
-    private void setEnabled(boolean enabled) {
+    private void toggleEnabled() {
+        final boolean target = !settings.enabled;
         setBusy(true);
-        PasswallApi.setEnabled(settings, enabled, new ApiCallback<Boolean>() {
+        PasswallApi.setEnabled(settings, target, new ApiCallback<Boolean>() {
             @Override
-            public void onSuccess(Boolean ok) {
+            public void onSuccess(Boolean result) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
                 Toast.makeText(PasswallActivity.this,
-                        getString(enabled ? R.string.pw_enabled_toast
+                        getString(target ? R.string.pw_enabled_toast
                                 : R.string.pw_disabled_toast, pwName()),
                         Toast.LENGTH_SHORT).show();
                 load();
@@ -253,9 +379,7 @@ public class PasswallActivity extends AppCompatActivity {
             public void onFailure(ApiError error) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
-                Toast.makeText(PasswallActivity.this,
-                        getString(R.string.pw_op_failed, error.getMessage()),
-                        Toast.LENGTH_LONG).show();
+                toastError(error);
                 load();
             }
         });
@@ -265,7 +389,7 @@ public class PasswallActivity extends AppCompatActivity {
         setBusy(true);
         PasswallApi.setNode(settings, node.section, new ApiCallback<Boolean>() {
             @Override
-            public void onSuccess(Boolean ok) {
+            public void onSuccess(Boolean result) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
                 Toast.makeText(PasswallActivity.this,
@@ -278,9 +402,53 @@ public class PasswallActivity extends AppCompatActivity {
             public void onFailure(ApiError error) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
+                toastError(error);
+                load();
+            }
+        });
+    }
+
+    private void applyQuickMode(PasswallApi.QuickMode mode) {
+        setBusy(true);
+        PasswallApi.setQuickMode(settings, mode, new ApiCallback<Boolean>() {
+            @Override
+            public void onSuccess(Boolean result) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
                 Toast.makeText(PasswallActivity.this,
-                        getString(R.string.pw_op_failed, error.getMessage()),
-                        Toast.LENGTH_LONG).show();
+                        getString(R.string.pw_mode_switched, quickModeLabel(mode)),
+                        Toast.LENGTH_SHORT).show();
+                load();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                toastError(error);
+                load();
+            }
+        });
+    }
+
+    /** 单键写回(分段/开关共用):静默成功,只重拉对齐 */
+    private void writeOption(String key, String value) {
+        Map<String, String> options = new LinkedHashMap<>();
+        options.put(key, value);
+        setBusy(true);
+        PasswallApi.setOptions(settings, options, null, new ApiCallback<Boolean>() {
+            @Override
+            public void onSuccess(Boolean result) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                load();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                toastError(error);
                 load();
             }
         });
@@ -303,10 +471,129 @@ public class PasswallActivity extends AppCompatActivity {
             public void onFailure(ApiError error) {
                 if (isFinishing() || isDestroyed()) return;
                 setBusy(false);
-                Toast.makeText(PasswallActivity.this,
-                        getString(R.string.pw_op_failed, error.getMessage()),
-                        Toast.LENGTH_LONG).show();
+                toastError(error);
             }
         });
+    }
+
+    private void toastError(ApiError error) {
+        Toast.makeText(this, getString(R.string.pw_op_failed, error.getMessage()),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    // =====================================================================
+    // DNS 选择/编辑
+    // =====================================================================
+
+    private void pickDnsShunt() {
+        String[] values = {"dnsmasq", "chinadns-ng", "smartdns"};
+        String[] labels = {"Dnsmasq", "ChinaDNS-NG", "SmartDNS"};
+        pickOption(getString(R.string.pw_dns_shunt_label), values, labels,
+                settings.dnsShunt, "dns_shunt");
+    }
+
+    private void pickDnsMode() {
+        String[] values = {"udp", "tcp", "dns2socks", "sing-box", "xray"};
+        String[] labels = {"UDP", "TCP", "dns2socks", "Sing-Box", "Xray"};
+        pickOption(getString(R.string.pw_dns_mode_label), values, labels,
+                settings.dnsMode, "dns_mode");
+    }
+
+    private void pickOption(String title, String[] values, String[] labels,
+                            String current, String key) {
+        int checked = -1;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) checked = i;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(title)
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    dialog.dismiss();
+                    if (!values[which].equals(current)) {
+                        writeOption(key, values[which]);
+                    }
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    private void editRemoteDns() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(settings.remoteDns == null ? "" : settings.remoteDns);
+        input.setSelection(input.getText().length());
+        input.setHint(R.string.pw_remote_dns_hint);
+        FrameLayout container = new FrameLayout(this);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        container.setPadding(pad, pad / 2, pad, 0);
+        container.addView(input);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.pw_remote_dns_label)
+                .setView(container)
+                .setPositiveButton(R.string.btn_save, (dialog, which) -> {
+                    String value = input.getText().toString().trim();
+                    if (!value.equals(settings.remoteDns == null ? "" : settings.remoteDns)) {
+                        writeOption("remote_dns", value);
+                    }
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    // =====================================================================
+    // 文案映射
+    // =====================================================================
+
+    private PasswallApi.QuickMode quickModeForButton(int checkedId) {
+        if (checkedId == R.id.pw_mode_gfw) return PasswallApi.QuickMode.GFW;
+        if (checkedId == R.id.pw_mode_chn) return PasswallApi.QuickMode.CHNROUTE;
+        if (checkedId == R.id.pw_mode_global) return PasswallApi.QuickMode.GLOBAL;
+        if (checkedId == R.id.pw_mode_return) return PasswallApi.QuickMode.RETURNHOME;
+        return null;
+    }
+
+    private String quickModeLabel(PasswallApi.QuickMode mode) {
+        switch (mode) {
+            case GFW:
+                return getString(R.string.pw_mode_gfw);
+            case CHNROUTE:
+                return getString(R.string.pw_mode_chn);
+            case GLOBAL:
+                return getString(R.string.pw_mode_global);
+            case RETURNHOME:
+                return getString(R.string.pw_mode_return);
+            default:
+                return "";
+        }
+    }
+
+    private String dnsShuntLabel(String value) {
+        if (value == null) return getString(R.string.pw_not_set);
+        switch (value) {
+            case "dnsmasq":
+                return "Dnsmasq";
+            case "chinadns-ng":
+                return "ChinaDNS-NG";
+            case "smartdns":
+                return "SmartDNS";
+            default:
+                return value;
+        }
+    }
+
+    private String dnsModeLabel(String value) {
+        if (value == null) return getString(R.string.pw_not_set);
+        switch (value) {
+            case "udp":
+                return "UDP";
+            case "tcp":
+                return "TCP";
+            case "sing-box":
+                return "Sing-Box";
+            case "xray":
+                return "Xray";
+            default:
+                return value;
+        }
     }
 }

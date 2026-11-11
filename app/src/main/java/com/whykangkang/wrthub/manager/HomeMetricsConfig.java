@@ -28,7 +28,9 @@ public final class HomeMetricsConfig {
         CONNECTIONS("connections", R.string.metric_connections, R.drawable.metric_connections),
         DEVICES("devices", R.string.metric_devices, R.drawable.metric_devices),
         SPEED("speed", R.string.metric_speed, R.drawable.metric_speed),
-        LATENCY("latency", R.string.metric_latency, R.drawable.metric_latency);
+        LATENCY("latency", R.string.metric_latency, R.drawable.metric_latency),
+        WAN_DOWN("wan_down", R.string.metric_wan_down, R.drawable.metric_download),
+        WAN_UP("wan_up", R.string.metric_wan_up, R.drawable.metric_upload);
 
         public final String key;
         @StringRes
@@ -51,6 +53,7 @@ public final class HomeMetricsConfig {
     }
 
     private static final String KEY = "dashboard.visibleMetrics";
+    private static final String KEY_V2 = "dashboard.metricsV2Migrated";
     public static final int MIN_VISIBLE = 2;
 
     private HomeMetricsConfig() {
@@ -63,7 +66,22 @@ public final class HomeMetricsConfig {
 
     /** 当前可见指标(按固定顺序)。未配置或少于下限时回退为全部显示。 */
     public static List<HomeMetric> visible(Context ctx) {
-        String raw = prefs(ctx).getString(KEY, null);
+        SharedPreferences prefs = prefs(ctx);
+        String raw = prefs.getString(KEY, null);
+        // 1.4 新增 WAN 总量两卡:老配置里没这两个键,一次性默认补上并落盘,
+        // 之后用户在首页编辑里关掉就是关掉,不再补
+        if (raw != null && !prefs.getBoolean(KEY_V2, false)) {
+            Set<String> keys = new LinkedHashSet<>(Arrays.asList(raw.split(",")));
+            keys.add(HomeMetric.WAN_DOWN.key);
+            keys.add(HomeMetric.WAN_UP.key);
+            StringBuilder sb = new StringBuilder();
+            for (String k : keys) {
+                if (sb.length() > 0) sb.append(',');
+                sb.append(k);
+            }
+            raw = sb.toString();
+            prefs.edit().putString(KEY, raw).putBoolean(KEY_V2, true).apply();
+        }
         if (raw == null) {
             return new ArrayList<>(Arrays.asList(HomeMetric.values()));
         }

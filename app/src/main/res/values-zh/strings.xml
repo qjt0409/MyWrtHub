@@ -15,6 +15,9 @@
     <string name="metric_devices">在线设备</string>
     <string name="metric_speed">网速</string>
     <string name="metric_latency">延迟</string>
+    <string name="metric_wan_down">总下行</string>
+    <string name="metric_wan_up">总上行</string>
+    <string name="metric_wan_month">本月 %1$s</string>
 
     <!-- 首页分组 -->
     <string name="section_system_info">系统信息</string>
@@ -528,6 +531,31 @@
     <string name="pw_node_switched">已切换到 %1$s</string>
     <string name="pw_restart">重启服务</string>
     <string name="pw_restarted_toast">%1$s 已重启</string>
+    <string name="pw_state_stopped_big">已停止</string>
+    <string name="pw_mode_label">代理模式</string>
+    <string name="pw_mode_gfw">GFW</string>
+    <string name="pw_mode_chn">白名单</string>
+    <string name="pw_mode_global">全局</string>
+    <string name="pw_mode_return">回国</string>
+    <string name="pw_mode_custom">当前为自定义组合</string>
+    <string name="pw_mode_switched">已切换为%1$s模式</string>
+    <string name="pw_settings_header">代理设置</string>
+    <string name="pw_tcp_label">TCP 代理</string>
+    <string name="pw_udp_label">UDP 代理</string>
+    <string name="pw_seg_disable">不代理</string>
+    <string name="pw_seg_proxy">代理</string>
+    <string name="pw_chn_label">大陆列表</string>
+    <string name="pw_chn_off">关闭</string>
+    <string name="pw_chn_direct">直连</string>
+    <string name="pw_gfw_label">GFW 列表</string>
+    <string name="pw_localhost_label">本机代理</string>
+    <string name="pw_client_label">局域网代理</string>
+    <string name="pw_dns_header">DNS</string>
+    <string name="pw_dns_shunt_label">DNS 分流</string>
+    <string name="pw_dns_mode_label">过滤模式</string>
+    <string name="pw_remote_dns_label">远程 DNS</string>
+    <string name="pw_remote_dns_hint">如 1.1.1.1 或 DoH 地址</string>
+    <string name="pw_not_set">未设置</string>
     <string name="crash_title">上次崩溃记录</string>
     <string name="crash_hint">App 上次闪退了。把下面这段复制发给开发者，就能准确定位原因。</string>
     <string name="crash_copy">复制记录</string>

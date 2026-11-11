@@ -35,12 +35,86 @@ public final class PasswallApi {
         public String nodeId = "";
         public final List<PasswallNode> nodes = new ArrayList<>();
 
+        // ===== 全局页常用项;null = 配置里没这个键,该项不展示 =====
+        // (PassWall 有全套;PassWall2 只有 localhost/client/remoteDns 三项,
+        //  它是分流节点模型,没有代理模式与 DNS 分流这些键)
+        /** TCP 默认代理模式:disable / proxy(PassWall) */
+        public String tcpProxyMode;
+        /** UDP 默认代理模式:disable / proxy(PassWall) */
+        public String udpProxyMode;
+        /** 大陆列表处理:0 关闭 / direct 直连 / proxy 代理(PassWall) */
+        public String chnList;
+        /** 是否使用 GFW 列表(PassWall) */
+        public Boolean useGfwList;
+        /** DNS 分流:dnsmasq / chinadns-ng / smartdns(PassWall) */
+        public String dnsShunt;
+        /** DNS 过滤模式:udp / tcp / dns2socks / sing-box / xray(PassWall) */
+        public String dnsMode;
+        /** 远程 DNS(两者都有) */
+        public String remoteDns;
+        /** 本机透明代理(两者都有) */
+        public Boolean localhostProxy;
+        /** 局域网设备透明代理(两者都有) */
+        public Boolean clientProxy;
+
         public PasswallNode currentNode() {
             for (PasswallNode n : nodes) {
                 if (n.section.equals(nodeId)) return n;
             }
             return null;
         }
+    }
+
+    /** LuCI 全局页的快捷模式:四个预设都是 use_gfw_list/chn_list/TCP/UDP 的组合 */
+    public enum QuickMode { GFW, CHNROUTE, GLOBAL, RETURNHOME, CUSTOM }
+
+    /** 由当前组合反推快捷模式;对不上任何预设就是 CUSTOM(网页版同样不亮按钮) */
+    public static QuickMode quickModeOf(PwSettings s) {
+        if (s.tcpProxyMode == null || s.udpProxyMode == null || s.chnList == null) {
+            return QuickMode.CUSTOM;
+        }
+        boolean gfw = Boolean.TRUE.equals(s.useGfwList);
+        boolean proxy = "proxy".equals(s.tcpProxyMode) && "proxy".equals(s.udpProxyMode);
+        boolean disable = "disable".equals(s.tcpProxyMode) && "disable".equals(s.udpProxyMode);
+        if (gfw && "0".equals(s.chnList) && disable) return QuickMode.GFW;
+        if (gfw && "direct".equals(s.chnList) && proxy) return QuickMode.CHNROUTE;
+        if (!gfw && "proxy".equals(s.chnList) && disable) return QuickMode.RETURNHOME;
+        if (!gfw && "0".equals(s.chnList) && proxy) return QuickMode.GLOBAL;
+        return QuickMode.CUSTOM;
+    }
+
+    /** 快捷模式对应的四个键值(与 LuCI proxy.htm 的 switch_*_mode 逐项一致) */
+    public static java.util.Map<String, String> quickModeValues(QuickMode mode) {
+        java.util.Map<String, String> v = new java.util.LinkedHashMap<>();
+        switch (mode) {
+            case GFW:
+                v.put("use_gfw_list", "1");
+                v.put("chn_list", "0");
+                v.put("tcp_proxy_mode", "disable");
+                v.put("udp_proxy_mode", "disable");
+                break;
+            case CHNROUTE:
+                v.put("use_gfw_list", "1");
+                v.put("chn_list", "direct");
+                v.put("tcp_proxy_mode", "proxy");
+                v.put("udp_proxy_mode", "proxy");
+                break;
+            case RETURNHOME:
+                v.put("use_gfw_list", "0");
+                v.put("chn_list", "proxy");
+                v.put("tcp_proxy_mode", "disable");
+                v.put("udp_proxy_mode", "disable");
+                break;
+            case GLOBAL:
+                v.put("use_gfw_list", "0");
+                v.put("chn_list", "0");
+                v.put("tcp_proxy_mode", "proxy");
+                v.put("udp_proxy_mode", "proxy");
+                break;
+            default:
+                break;
+        }
+        return v;
     }
 
     private PasswallApi() {
@@ -81,6 +155,15 @@ public final class PasswallApi {
                     out.globalSection = key;
                     out.enabled = EqosApi.uciBool(sec, "enabled", false);
                     out.nodeId = str(sec, "node", "");
+                    out.tcpProxyMode = optStr(sec, "tcp_proxy_mode");
+                    out.udpProxyMode = optStr(sec, "udp_proxy_mode");
+                    out.chnList = optStr(sec, "chn_list");
+                    out.useGfwList = optBool(sec, "use_gfw_list");
+                    out.dnsShunt = optStr(sec, "dns_shunt");
+                    out.dnsMode = optStr(sec, "dns_mode");
+                    out.remoteDns = optStr(sec, "remote_dns");
+                    out.localhostProxy = optBool(sec, "localhost_proxy");
+                    out.clientProxy = optBool(sec, "client_proxy");
                 }
             } else if ("nodes".equals(type)) {
                 PasswallNode n = new PasswallNode();
@@ -103,6 +186,18 @@ public final class PasswallApi {
         return e != null && !e.isJsonNull() && e.isJsonPrimitive() ? e.getAsString() : def;
     }
 
+    /** 可选字符串键:没这个键或空串返回 null(界面据此决定显不显示该项) */
+    private static String optStr(JsonObject o, String key) {
+        String v = str(o, key, "");
+        return v.isEmpty() ? null : v;
+    }
+
+    /** 可选布尔键:没这个键返回 null */
+    private static Boolean optBool(JsonObject o, String key) {
+        if (!o.has(key) || o.get(key).isJsonNull()) return null;
+        return EqosApi.uciBool(o, key, false);
+    }
+
     /** 服务进程是否在跑(ubus service list) */
     public static void serviceRunning(String config, ApiCallback<Boolean> cb) {
         api().serviceList(config, new ApiCallback<JsonObject>() {
@@ -118,19 +213,24 @@ public final class PasswallApi {
         });
     }
 
-    /** 总开关写回全局段,apply 后重启服务让开关生效 */
-    public static void setEnabled(PwSettings settings, boolean enabled,
-                                  ApiCallback<Boolean> cb) {
+    /**
+     * 通用写回:把一组键值写进全局段,apply 后重启服务生效。
+     * enableHint 非 null 时按总开关语义处理(开→多一步 enable)。
+     */
+    public static void setOptions(PwSettings settings, java.util.Map<String, String> options,
+                                  Boolean enableHint, ApiCallback<Boolean> cb) {
         if (settings.globalSection.isEmpty()) {
             cb.onFailure(new ApiError(ApiError.Type.INVALID_RESPONSE, "缺少全局配置段"));
             return;
         }
         JsonObject values = new JsonObject();
-        values.addProperty("enabled", enabled ? "1" : "0");
+        for (java.util.Map.Entry<String, String> e : options.entrySet()) {
+            values.addProperty(e.getKey(), e.getValue());
+        }
         api().uciSet(settings.config, settings.globalSection, values, new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
-                apply(settings.config, enabled, cb);
+                apply(settings.config, enableHint, cb);
             }
 
             @Override
@@ -140,26 +240,26 @@ public final class PasswallApi {
         });
     }
 
+    /** 总开关写回全局段,apply 后重启服务让开关生效 */
+    public static void setEnabled(PwSettings settings, boolean enabled,
+                                  ApiCallback<Boolean> cb) {
+        java.util.Map<String, String> v = new java.util.LinkedHashMap<>();
+        v.put("enabled", enabled ? "1" : "0");
+        setOptions(settings, v, enabled, cb);
+    }
+
     /** 切换当前节点:把全局段 node 改为目标段名,apply 后重启服务 */
     public static void setNode(PwSettings settings, String nodeSection,
                                ApiCallback<Boolean> cb) {
-        if (settings.globalSection.isEmpty()) {
-            cb.onFailure(new ApiError(ApiError.Type.INVALID_RESPONSE, "缺少全局配置段"));
-            return;
-        }
-        JsonObject values = new JsonObject();
-        values.addProperty("node", nodeSection);
-        api().uciSet(settings.config, settings.globalSection, values, new ApiCallback<JsonObject>() {
-            @Override
-            public void onSuccess(JsonObject result) {
-                apply(settings.config, null, cb);
-            }
+        java.util.Map<String, String> v = new java.util.LinkedHashMap<>();
+        v.put("node", nodeSection);
+        setOptions(settings, v, null, cb);
+    }
 
-            @Override
-            public void onFailure(ApiError error) {
-                cb.onFailure(error);
-            }
-        });
+    /** 应用快捷模式(四个键一次写回) */
+    public static void setQuickMode(PwSettings settings, QuickMode mode,
+                                    ApiCallback<Boolean> cb) {
+        setOptions(settings, quickModeValues(mode), null, cb);
     }
 
     /** 手动重启服务(用户点的按钮,结果如实回调) */

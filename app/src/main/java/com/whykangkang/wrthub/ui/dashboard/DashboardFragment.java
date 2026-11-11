@@ -337,6 +337,22 @@ public class DashboardFragment extends Fragment {
                 return metricCard(R.drawable.metric_speed, R.color.ios_teal,
                         getString(R.string.metric_speed), down, up, null);
             }
+            case WAN_DOWN: {
+                if (data.wanTotalRx == null) return null;
+                return metricCard(R.drawable.metric_download, R.color.ios_blue,
+                        getString(R.string.metric_wan_down),
+                        Formatters.bytes(data.wanTotalRx),
+                        data.wanMonthRx != null ? getString(R.string.metric_wan_month,
+                                Formatters.bytes(data.wanMonthRx)) : null, null);
+            }
+            case WAN_UP: {
+                if (data.wanTotalTx == null) return null;
+                return metricCard(R.drawable.metric_upload, R.color.ios_orange,
+                        getString(R.string.metric_wan_up),
+                        Formatters.bytes(data.wanTotalTx),
+                        data.wanMonthTx != null ? getString(R.string.metric_wan_month,
+                                Formatters.bytes(data.wanMonthTx)) : null, null);
+            }
             case LATENCY:
             default:
                 return buildLatencyCard();

@@ -53,4 +53,57 @@ public class PasswallApiTest {
         assertTrue(s.nodes.isEmpty());
         assertNull(s.currentNode());
     }
+
+    @Test
+    public void parse_readsGlobalOptionsAndQuickModes() {
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"cfg010000\":{\".type\":\"global\",\"enabled\":\"1\","
+                + "\"tcp_proxy_mode\":\"proxy\",\"udp_proxy_mode\":\"proxy\","
+                + "\"chn_list\":\"direct\",\"use_gfw_list\":\"1\","
+                + "\"dns_shunt\":\"chinadns-ng\",\"dns_mode\":\"tcp\","
+                + "\"remote_dns\":\"1.1.1.1\",\"localhost_proxy\":\"1\","
+                + "\"client_proxy\":\"0\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.PwSettings s = PasswallApi.parse(result);
+
+        assertEquals("proxy", s.tcpProxyMode);
+        assertEquals("direct", s.chnList);
+        assertEquals(Boolean.TRUE, s.useGfwList);
+        assertEquals("chinadns-ng", s.dnsShunt);
+        assertEquals("tcp", s.dnsMode);
+        assertEquals("1.1.1.1", s.remoteDns);
+        assertEquals(Boolean.TRUE, s.localhostProxy);
+        assertEquals(Boolean.FALSE, s.clientProxy);
+        // gfw=1 + chn=direct + tcp/udp=proxy → 大陆白名单
+        assertEquals(PasswallApi.QuickMode.CHNROUTE, PasswallApi.quickModeOf(s));
+
+        // 改一个键就对不上预设 → CUSTOM
+        s.udpProxyMode = "disable";
+        assertEquals(PasswallApi.QuickMode.CUSTOM, PasswallApi.quickModeOf(s));
+
+        // 快捷模式写回的四个键与 LuCI 的 switch_*_mode 一致
+        java.util.Map<String, String> g = PasswallApi.quickModeValues(
+                PasswallApi.QuickMode.GLOBAL);
+        assertEquals("0", g.get("use_gfw_list"));
+        assertEquals("0", g.get("chn_list"));
+        assertEquals("proxy", g.get("tcp_proxy_mode"));
+        assertEquals("proxy", g.get("udp_proxy_mode"));
+    }
+
+    @Test
+    public void parse_passwall2GlobalHasOnlyCommonOptions() {
+        // passwall2 全局段没有代理模式/DNS 分流键:对应字段必须为 null
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"cfg010000\":{\".type\":\"global\",\"enabled\":\"1\","
+                + "\"node\":\"rulenode\",\"localhost_proxy\":\"1\","
+                + "\"client_proxy\":\"1\",\"remote_dns\":\"8.8.8.8\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.PwSettings s = PasswallApi.parse(result);
+        assertNull(s.tcpProxyMode);
+        assertNull(s.chnList);
+        assertNull(s.dnsShunt);
+        assertEquals("8.8.8.8", s.remoteDns);
+        assertEquals(Boolean.TRUE, s.clientProxy);
+        assertEquals(PasswallApi.QuickMode.CUSTOM, PasswallApi.quickModeOf(s));
+    }
 }

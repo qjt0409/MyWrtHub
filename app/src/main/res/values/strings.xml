@@ -15,6 +15,9 @@
     <string name="metric_devices">Online Devices</string>
     <string name="metric_speed">Speed</string>
     <string name="metric_latency">Latency</string>
+    <string name="metric_wan_down">Total down</string>
+    <string name="metric_wan_up">Total up</string>
+    <string name="metric_wan_month">This month %1$s</string>
 
     <!-- Dashboard sections -->
     <string name="section_system_info">System</string>
@@ -527,6 +530,31 @@
     <string name="pw_node_switched">Switched to %1$s</string>
     <string name="pw_restart">Restart service</string>
     <string name="pw_restarted_toast">%1$s restarted</string>
+    <string name="pw_state_stopped_big">Stopped</string>
+    <string name="pw_mode_label">Proxy mode</string>
+    <string name="pw_mode_gfw">GFW</string>
+    <string name="pw_mode_chn">Whitelist</string>
+    <string name="pw_mode_global">Global</string>
+    <string name="pw_mode_return">Return</string>
+    <string name="pw_mode_custom">Custom combination</string>
+    <string name="pw_mode_switched">Switched to %1$s mode</string>
+    <string name="pw_settings_header">Proxy settings</string>
+    <string name="pw_tcp_label">TCP proxy</string>
+    <string name="pw_udp_label">UDP proxy</string>
+    <string name="pw_seg_disable">No proxy</string>
+    <string name="pw_seg_proxy">Proxy</string>
+    <string name="pw_chn_label">China list</string>
+    <string name="pw_chn_off">Off</string>
+    <string name="pw_chn_direct">Direct</string>
+    <string name="pw_gfw_label">GFW list</string>
+    <string name="pw_localhost_label">Localhost proxy</string>
+    <string name="pw_client_label">LAN client proxy</string>
+    <string name="pw_dns_header">DNS</string>
+    <string name="pw_dns_shunt_label">DNS shunt</string>
+    <string name="pw_dns_mode_label">Filter mode</string>
+    <string name="pw_remote_dns_label">Remote DNS</string>
+    <string name="pw_remote_dns_hint">e.g. 1.1.1.1 or a DoH URL</string>
+    <string name="pw_not_set">Not set</string>
     <string name="crash_title">Last crash</string>
     <string name="crash_hint">The app crashed last time. Copy this report and send it to the developer to pinpoint the cause.</string>
     <string name="crash_copy">Copy report</string>
