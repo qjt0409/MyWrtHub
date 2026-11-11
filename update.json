@@ -1,1 +1,1 @@
-{"downloadUrl":"https://github.com/qjt0409/MyWrtHub/actions","forceUpdate":false,"updateMessage":"1.1:终端页改为 OPAssistant 同款(fwx 实时速率/今日流量/常用App/详情六页签/拉黑);设备限速改对接固件的 luci-app-eqosplus(MB/s)。","versionCode":2,"versionName":"1.1"}
+{"downloadUrl":"https://github.com/qjt0409/MyWrtHub/releases","forceUpdate":false,"updateMessage":"1.2:新增 PassWall 与 PassWall2 页(状态/总开关/节点切换);修复 HTTPS 下 sysauth_https 会话 cookie 未识别导致 CGI 功能失效;新增崩溃记录(闪退后重开 App 可复制记录)。","versionCode":3,"versionName":"1.2"}

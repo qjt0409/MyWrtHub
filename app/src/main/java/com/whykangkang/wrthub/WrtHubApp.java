@@ -3,6 +3,7 @@ package com.whykangkang.wrthub;
 import android.app.Application;
 
 import com.whykangkang.wrthub.api.OpenWrtApi;
+import com.whykangkang.wrthub.manager.CrashTrap;
 import com.whykangkang.wrthub.manager.LocaleManager;
 import com.whykangkang.wrthub.manager.RouterDeviceManager;
 import com.whykangkang.wrthub.manager.SettingsManager;
@@ -14,6 +15,7 @@ public class WrtHubApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        CrashTrap.install(this);
         SettingsManager settings = SettingsManager.getInstance(this);
         LocaleManager.applyAppearance(settings.getAppearance());
         LocaleManager.apply(settings.getLanguage());

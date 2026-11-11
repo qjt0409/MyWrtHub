@@ -30,6 +30,10 @@ public final class PluginChecker {
         WANSTATS("wanstats"),
         /** OpenAppFilter:看 /etc/init.d/appfilter 在不在 */
         APPFILTER("appfilter"),
+        /** PassWall:看 /etc/init.d/passwall 在不在 */
+        PASSWALL("passwall"),
+        /** PassWall2:看 /etc/init.d/passwall2 在不在 */
+        PASSWALL2("passwall2"),
         TTYD("ttyd"),
         /** 网络唤醒:etherwake 或 wol 有一个就行,不看 init 脚本 */
         WOL("wol");

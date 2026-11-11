@@ -293,7 +293,13 @@ public class OpenWrtApi {
             String token = null;
             if (response.code() == 302) {
                 for (String setCookie : response.headers("Set-Cookie")) {
-                    String v = extractCookie(setCookie, "sysauth_http");
+                    // LuCI 按协议给会话 cookie 命名:HTTP 是 sysauth_http,
+                    // HTTPS 是 sysauth_https,两个都要认(只认 http 名时
+                    // HTTPS 下永远拿不到表单 token,CGI 通道全灭)
+                    String v = extractCookie(setCookie, "sysauth_https");
+                    if (v == null) {
+                        v = extractCookie(setCookie, "sysauth_http");
+                    }
                     if (v == null) {
                         v = extractCookie(setCookie, "sysauth");
                     }
@@ -543,6 +549,14 @@ public class OpenWrtApi {
     }
 
     /**
+     * CGI 请求的 Cookie 头:会话 cookie 名按协议不同(HTTP 是 sysauth_http、
+     * HTTPS 是 sysauth_https),两个名字成对带上,哪种协议都能被 LuCI 认。
+     */
+    static String sysauthCookieHeader(String token) {
+        return "sysauth_http=" + token + "; sysauth_https=" + token;
+    }
+
+    /**
      * GET /cgi-bin/luci&lt;path&gt;,带 sysauth_http cookie,返回原始响应文本。
      * path 例:"/admin/services/openclash/status"
      */
@@ -586,13 +600,15 @@ public class OpenWrtApi {
                     return;
                 }
             }
+            // Cookie 名按协议成对带上:HTTPS 下 LuCI 只认 sysauth_https,
+            // 只发 sysauth_http 会被当未登录(403),CGI 功能在 HTTPS 下全灭
+            String sysauthPair = sysauthCookieHeader(cgiSysauthToken());
             Request.Builder builder = new Request.Builder()
                     .url(baseUrl() + "/cgi-bin/luci" + path)
-                    .header("Cookie", "sysauth_http=" + cgiSysauthToken());
+                    .header("Cookie", sysauthPair);
             if (browserHeaders) {
                 // 必须在登录之后拼:ubusToken 在上面那步才拿到
-                builder.header("Cookie",
-                        "sysauth=" + ubusToken + "; sysauth_http=" + cgiSysauthToken());
+                builder.header("Cookie", "sysauth=" + ubusToken + "; " + sysauthPair);
                 builder.header("Accept", "*/*");
                 builder.header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
                 builder.header("Connection", "keep-alive");

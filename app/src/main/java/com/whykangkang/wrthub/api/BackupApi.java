@@ -65,7 +65,7 @@ public final class BackupApi {
         Request request = new Request.Builder()
                 .url(api.baseUrl() + "/cgi-bin/cgi-backup")
                 .post(RequestBody.create("sessionid=" + token, FORM))
-                .header("Cookie", "sysauth_http=" + token)
+                .header("Cookie", OpenWrtApi.sysauthCookieHeader(token))
                 .header("Referer", api.baseUrl() + "/cgi-bin/luci/admin/system/flash")
                 .build();
         try (Response response = api.clientWithTimeout(180).newCall(request).execute()) {
@@ -302,7 +302,7 @@ public final class BackupApi {
             Request request = new Request.Builder()
                     .url(api.baseUrl() + "/cgi-bin/cgi-upload?" + System.currentTimeMillis())
                     .post(body)
-                    .header("Cookie", "sysauth_http=" + token)
+                    .header("Cookie", OpenWrtApi.sysauthCookieHeader(token))
                     .header("Referer", api.baseUrl() + "/cgi-bin/luci/admin/system/flash")
                     .build();
             try (Response response = api.clientWithTimeout(300).newCall(request).execute()) {

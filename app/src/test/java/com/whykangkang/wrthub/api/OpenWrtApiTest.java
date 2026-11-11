@@ -256,6 +256,18 @@ public class OpenWrtApiTest {
     }
 
     @Test
+    public void extractCookie_httpsNameNotConfusedWithHttp() {
+        // HTTPS 下 LuCI 的会话 cookie 叫 sysauth_https;按 http 名不能误命中,
+        // 按 https 名要能取到(表单登录两个名字都会试)
+        String header = "sysauth_https=tokABC; path=/cgi-bin/luci; HttpOnly";
+        assertEquals("tokABC", OpenWrtApi.extractCookie(header, "sysauth_https"));
+        assertNull(OpenWrtApi.extractCookie(header, "sysauth_http"));
+        // CGI 请求的 Cookie 头必须两个名字都带
+        assertEquals("sysauth_http=T; sysauth_https=T",
+                OpenWrtApi.sysauthCookieHeader("T"));
+    }
+
+    @Test
     public void configure_clearsPreviousSession() throws Exception {
         server.enqueue(formLogin302());
         server.enqueue(new MockResponse().setBody(LOGIN_OK));

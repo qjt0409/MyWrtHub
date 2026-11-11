@@ -24,6 +24,8 @@ import com.whykangkang.wrthub.ui.services.interfaces.NetworkInterfacesActivity;
 import com.whykangkang.wrthub.ui.services.led.LedConfigActivity;
 import com.whykangkang.wrthub.ui.services.log.SystemLogActivity;
 import com.whykangkang.wrthub.ui.services.packages.PackageManagerActivity;
+import com.whykangkang.wrthub.ui.services.passwall.Passwall2Activity;
+import com.whykangkang.wrthub.ui.services.passwall.PasswallActivity;
 import com.whykangkang.wrthub.ui.services.proxy.ProxyActivity;
 import com.whykangkang.wrthub.ui.services.ratelimit.DeviceRateLimitActivity;
 import com.whykangkang.wrthub.ui.services.samba.SambaServiceActivity;
@@ -55,6 +57,8 @@ public final class ServiceCatalog {
         OAF_RECORDS("oafRecords"),
         SPEEDTEST("speedtest"),
         PROXY("proxy"),
+        PASSWALL("passwall"),
+        PASSWALL2("passwall2"),
         SAMBA("samba"),
         FTP("ftp"),
         FILEBROWSER("filebrowser"),
@@ -147,6 +151,14 @@ public final class ServiceCatalog {
                     R.string.svc_proxy_sub, R.drawable.svc_proxy, R.color.ios_purple,
                     ProxyActivity.class, PluginChecker.Plugin.OPENCLASH, "openclash",
                     R.string.svc_need_openclash),
+            new Descriptor(ServiceId.PASSWALL, R.string.svc_passwall,
+                    R.string.svc_passwall_sub, R.drawable.svc_passwall, R.color.ios_purple,
+                    PasswallActivity.class, PluginChecker.Plugin.PASSWALL, "luci-app-passwall",
+                    R.string.svc_need_passwall),
+            new Descriptor(ServiceId.PASSWALL2, R.string.svc_passwall2,
+                    R.string.svc_passwall2_sub, R.drawable.svc_passwall, R.color.ios_purple,
+                    Passwall2Activity.class, PluginChecker.Plugin.PASSWALL2, "luci-app-passwall2",
+                    R.string.svc_need_passwall2),
             new Descriptor(ServiceId.DEVICE_RATE_LIMIT, R.string.svc_rate_limit,
                     R.string.svc_rate_limit_sub, R.drawable.svc_ratelimit, R.color.ios_orange,
                     DeviceRateLimitActivity.class, PluginChecker.Plugin.EQOSPLUS, "eqosplus",

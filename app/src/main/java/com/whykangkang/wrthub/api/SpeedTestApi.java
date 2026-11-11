@@ -289,7 +289,7 @@ public final class SpeedTestApi {
         Request request = new Request.Builder()
                 .url(api.baseUrl() + "/cgi-bin/cgi-upload?" + System.nanoTime())
                 .post(body)
-                .header("Cookie", "sysauth_http=" + api.cgiSysauthToken())
+                .header("Cookie", OpenWrtApi.sysauthCookieHeader(api.cgiSysauthToken()))
                 .build();
         try (Response response = api.clientWithTimeout(30).newCall(request).execute()) {
             return response.isSuccessful();

@@ -9,6 +9,7 @@ import androidx.fragment.app.FragmentTransaction;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.whykangkang.wrthub.R;
+import com.whykangkang.wrthub.manager.CrashTrap;
 import com.whykangkang.wrthub.ui.common.UpdatePrompt;
 import com.whykangkang.wrthub.ui.dashboard.DashboardFragment;
 import com.whykangkang.wrthub.ui.devices.DevicesFragment;
@@ -39,6 +40,9 @@ public class MainActivity extends AppCompatActivity {
 
         // 每次启动检测一次新版本(UpdatePrompt 内部按进程去重),没有更新时静默
         UpdatePrompt.autoCheck(this);
+
+        // 上次有崩溃记录的话弹出来,方便复制反馈
+        CrashTrap.maybeShow(this);
     }
 
     private void switchTab(int itemId) {

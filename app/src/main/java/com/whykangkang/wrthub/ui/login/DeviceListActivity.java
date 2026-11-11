@@ -56,6 +56,7 @@ public class DeviceListActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         manager = RouterDeviceManager.getInstance(this);
+        com.whykangkang.wrthub.manager.CrashTrap.maybeShow(this);
         if (savedInstanceState == null && resumeLastSession()) return;
 
         setContentView(R.layout.activity_device_list);
