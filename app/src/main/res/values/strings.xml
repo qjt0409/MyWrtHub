@@ -4,7 +4,7 @@
     <!-- Bottom navigation tabs -->
     <string name="tab_dashboard">Overview</string>
     <string name="tab_realtime">Realtime</string>
-    <string name="tab_devices">Devices</string>
+    <string name="tab_devices">Terminals</string>
     <string name="tab_services">Services</string>
     <string name="tab_settings">Settings</string>
 
@@ -383,29 +383,106 @@
     <string name="eqos_global_footer">The total bandwidth is used to size the queue — enter what your plan actually provides. Turning the master switch off disables every limit immediately.</string>
     <string name="eqos_devices">Limited Devices</string>
     <string name="eqos_empty">No limited devices yet. Tap Add in the top-right corner.</string>
-    <string name="eqos_unit_hint">1 Mbit/s = 125 KB/s. A 10 Mbit/s limit downloads at about 1.25 MB/s.</string>
-    <string name="eqos_devices_footer">Long-press an entry to remove its limit. Both directions are required, minimum 1 Mbit/s.\n1 Mbit/s = 125 KB/s. A 10 Mbit/s limit downloads at about 1.25 MB/s.</string>
+    <string name="eqos_unit_hint">Limits are in MB/s (decimals allowed, e.g. 0.5). 1 MB/s ≈ 8 Mbit/s.</string>
+    <string name="eqos_devices_footer">Long-press an entry to remove its limit. A direction set to 0 is unlimited, but both cannot be 0.\nLimits are in MB/s (decimals allowed). 1 MB/s ≈ 8 Mbit/s.</string>
     <string name="eqos_add_device">Add Device</string>
     <string name="eqos_edit_device">Edit Limit</string>
     <string name="eqos_pick_connected">Pick from connected devices</string>
     <string name="eqos_enter_ip">Enter IP manually</string>
     <string name="eqos_pick_title">Select Device</string>
     <string name="eqos_no_candidates">No devices available to add</string>
-    <string name="eqos_device_hint">Limits are in Mbit/s. Both upload and download are required, minimum 1.</string>
-    <string name="eqos_bandwidth_hint">Enter the bandwidth your plan actually provides, in Mbit/s, minimum 1. An inaccurate value skews every limit.</string>
+    <string name="eqos_device_hint">Limits are in MB/s (decimals allowed). 0 means unlimited for that direction; both cannot be 0.</string>
+    <string name="eqos_bandwidth_hint">Enter the bandwidth your plan actually provides, in MB/s. An inaccurate value skews every limit.</string>
     <string name="eqos_comment_hint">Note (optional)</string>
     <string name="eqos_ip_hint">IP address</string>
-    <string name="eqos_down_hint">Download limit Mbit/s</string>
-    <string name="eqos_up_hint">Upload limit Mbit/s</string>
+    <string name="eqos_target_hint">IP / MAC / range, e.g. 10.0.1.7 or 10.0.1.10-10.0.1.20</string>
+    <string name="eqos_down_hint">Download limit MB/s</string>
+    <string name="eqos_up_hint">Upload limit MB/s</string>
     <string name="eqos_invalid_ip">Please enter a valid IPv4 address</string>
-    <string name="eqos_both_required">Both upload and download are required and cannot be below 1</string>
-    <string name="eqos_positive_required">Enter a positive whole number</string>
+    <string name="eqos_invalid_target">Enter a valid IP, MAC, IP range or IP/mask</string>
+    <string name="eqos_invalid_time">Time must be HH:MM, e.g. 08:00</string>
+    <string name="eqos_week_label">Active days</string>
+    <string name="eqos_time_label">Active time range</string>
+    <string name="eqos_both_required">Both directions are required; 0 is allowed for one direction, but not both</string>
+    <string name="eqos_positive_required">Enter a positive number (decimals allowed)</string>
     <string name="eqos_disabled_suffix">%1$s (disabled)</string>
     <string name="eqos_remove_title">Remove Limit</string>
     <string name="eqos_remove_msg">Stop limiting %1$s?</string>
-    <string name="eqos_not_configured">No eqos configuration found. Install luci-app-eqos from Packages first.</string>
+    <string name="eqos_not_configured">No eqosplus configuration found. Install luci-app-eqosplus from Packages first.</string>
     <string name="eqos_load_failed">Failed to load</string>
     <string name="eqos_action_failed">Operation Failed</string>
+    <string-array name="eqos_week_labels">
+        <item>Every day</item>
+        <item>Weekdays</item>
+        <item>Weekend</item>
+        <item>Monday</item>
+        <item>Tuesday</item>
+        <item>Wednesday</item>
+        <item>Thursday</item>
+        <item>Friday</item>
+        <item>Saturday</item>
+        <item>Sunday</item>
+    </string-array>
+
+    <!-- Terminals (OpenAppFilter users) -->
+    <string name="term_summary">%1$d terminals · %2$d online · %3$d active</string>
+    <string name="term_active">Active</string>
+    <string name="term_online">Online</string>
+    <string name="term_offline">Offline</string>
+    <string name="term_blocked_badge">Blocked</string>
+    <string name="term_loading">Loading…</string>
+    <string name="term_load_failed">Failed to load</string>
+    <string name="term_no_data">No data yet</string>
+    <string name="term_tab_basic">Basic</string>
+    <string name="term_tab_rules">Rules</string>
+    <string name="term_tab_appstat">App Stats</string>
+    <string name="term_tab_traffic">Traffic Today</string>
+    <string name="term_tab_apps">Top Apps</string>
+    <string name="term_tab_records">Records</string>
+    <string name="term_section_basic">Basic info</string>
+    <string name="term_section_today">Today</string>
+    <string name="term_section_common_apps">Top apps today</string>
+    <string name="term_access">Access</string>
+    <string name="term_wireless">Wi-Fi</string>
+    <string name="term_wired">Wired</string>
+    <string name="term_current_app">Current app</string>
+    <string name="term_current_url">Current URL</string>
+    <string name="term_today_up">Upload today</string>
+    <string name="term_today_down">Download today</string>
+    <string name="term_today_active">Active time today</string>
+    <string name="term_module_appfilter">App control</string>
+    <string name="term_module_macfilter">Access control</string>
+    <string name="term_module_blacklist">Blacklist</string>
+    <string name="term_whitelist_af">This device is on the app-filter whitelist; app control rules do not apply to it.</string>
+    <string name="term_whitelist_mf">This device is on the access-control whitelist; access rules do not apply to it.</string>
+    <string name="term_no_rules">No control rules apply to this device</string>
+    <string name="term_everyday">Every day</string>
+    <string name="term_duration_limit">daily limit %1$d min</string>
+    <string name="term_flow_limit">daily limit %1$s MB</string>
+    <string name="term_in_blacklist">On the internet blacklist</string>
+    <string name="term_today_matched">In a controlled time range now</string>
+    <string name="term_today_unmatched">Not in a controlled time range now</string>
+    <string name="term_today_unlimited">Unlimited today</string>
+    <string name="term_today_used_duration">Used today %1$d / %2$d min (%3$d%%)</string>
+    <string name="term_today_used_flow">Used today %1$s / %2$s MB (%3$d%%)</string>
+    <string name="term_appstat_total">Total time: %1$s</string>
+    <string name="term_hourly_total">Today total ↑ %1$s · ↓ %2$s</string>
+    <string name="term_load_more">Load more</string>
+    <string name="term_block">Block</string>
+    <string name="term_unblock">Unblock</string>
+    <string name="term_block_msg">Block %1$s? It will lose internet access until unblocked.</string>
+    <string name="term_unblock_msg">Unblock %1$s?</string>
+    <string name="term_block_ok">Blocked</string>
+    <string name="term_unblock_ok">Unblocked</string>
+    <string-array name="term_weekdays">
+        <item>Sun</item>
+        <item>Mon</item>
+        <item>Tue</item>
+        <item>Wed</item>
+        <item>Thu</item>
+        <item>Fri</item>
+        <item>Sat</item>
+    </string-array>
 
     <!-- Firewall management -->
     <string name="fw_tab_status">Status</string>
@@ -438,7 +515,7 @@
     <string name="svc_plugin_missing">Plugin Not Installed</string>
     <string name="svc_go_install">Install</string>
     <string name="svc_need_openclash">The network proxy requires the OpenClash package.</string>
-    <string name="svc_need_eqos">Rate limiting requires the luci-app-eqos package, which caps a device\'s up/down bandwidth by IP.</string>
+    <string name="svc_need_eqos">Rate limiting requires the luci-app-eqosplus package, which caps a device\'s up/down bandwidth by IP or MAC.</string>
     <string name="svc_need_samba">NAS sharing requires the samba4 package.</string>
     <string name="svc_need_vsftpd">The FTP service requires the vsftpd package.</string>
 

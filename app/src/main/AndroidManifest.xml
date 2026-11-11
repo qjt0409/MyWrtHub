@@ -38,6 +38,9 @@
             android:name=".ui.devices.BlacklistActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.devices.TerminalDeviceActivity"
+            android:exported="false" />
+        <activity
             android:name=".ui.services.diagnostics.NetworkDiagnosticsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

@@ -21,6 +21,8 @@ public final class PluginChecker {
     public enum Plugin {
         OPENCLASH("openclash"),
         EQOS("eqos"),
+        /** 固件里实际装的是 eqosplus(按 /etc/init.d/eqosplus 判定) */
+        EQOSPLUS("eqosplus"),
         SAMBA("samba4"),
         FTP("vsftpd"),
         FILEBROWSER("filebrowser"),

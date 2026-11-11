@@ -4,6 +4,8 @@
 
 - **WAN流量统计**：对接自家 [luci-app-wanstats](https://github.com/qjt0409/luci-app-bandwidthd)（固件里的 rpcd `wanstats` 对象），看 WAN 口每日 / 每月总流量，保留 13 个月，与 LuCI 页面同源同数。
 - **OpenAppFilter**：对接路由器上的 OpenAppFilter（appfilter），应用过滤与上网记录，功能点子来自 OPAssistant。
+- **终端页（1.1）**：底部「终端」页照 OPAssistant 复刻——fwx 实时上下行速率、今日流量与活跃时长、常用 App、3 秒刷新；点开有详情六页签（基本信息 / 管控规则 / App统计 / 今日流量 / 常用App / 应用记录）和「拉黑」（fwx 上网黑名单）。
+- **设备限速（1.1）**：对接固件实际装的 `luci-app-eqosplus`（不是老 eqos），按 IP / MAC / IP 段限速，单位 MB/s，带生效星期与时段；终端详情页可直接跳到对应设备的限速设置。
 
 其余功能与上游 WrtHub 一致：总览（CPU / 内存 / 温度 / 实时流量）、在线设备、防火墙、网络接口、OpenClash、设备限速、vnStat、LAN 测速、Samba / FTP / FileBrowser、AI 终端（ttyd）、网络唤醒、日志、软件包、定时任务、LED、WiFi 管理等。路由器侧不需要装任何额外代理，App 通过 LuCI 的 ubus JSON-RPC 与路由器通信；依赖特定包的功能在未安装时会自动灰掉并给出安装入口。
 

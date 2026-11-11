@@ -5,8 +5,10 @@ import android.text.InputType;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -32,16 +34,23 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 设备限速(luci-app-eqos),对应 iOS DeviceRateLimitViewController。
+ * 设备限速(luci-app-eqosplus,固件实际装的版本)。
  *
- *  - 总开关 + WAN 总带宽(eqos 靠它算 HTB 根队列,填错所有限速都不准)
- *  - 每台设备一条上/下行上限,可从已连接设备里挑,省得手打 IP
+ *  - 总开关 + WAN 总带宽(单位 MB/s,eqosplus 靠它算 HTB 根队列)
+ *  - 每台设备一条上/下行上限(MB/s,可带小数),目标可填 IP / MAC / IP 段,
+ *    可从已连接设备里挑;每条规则还带生效星期与时段
+ *  - 终端详情页会带 EXTRA_TARGET 跳进来:有规则直接改,没有就预填新增
  */
 public class DeviceRateLimitActivity extends AppCompatActivity {
+
+    /** 从终端详情页跳入时预填的目标 IP 与设备名 */
+    public static final String EXTRA_TARGET = "extra_target";
+    public static final String EXTRA_DEVICE_NAME = "extra_device_name";
 
     private EqosGlobal global = EqosGlobal.defaults();
     private final List<EqosDevice> devices = new ArrayList<>();
     private boolean loaded;
+    private boolean prefillHandled;
 
     private SwipeRefreshLayout refresh;
     private LinearLayout globalContainer;
@@ -50,6 +59,10 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
     private TextView statusLabel;
     private View content;
     private boolean suppressSwitchCallback;
+
+    /** 星期选项的值与文案(顺序与 eqosplus 网页端一致) */
+    private static final String[] WEEK_VALUES =
+            {"0", "1,2,3,4,5", "6,7", "1", "2", "3", "4", "5", "6", "7"};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,6 +95,7 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
                 statusLabel.setVisibility(View.GONE);
                 content.setVisibility(View.VISIBLE);
                 render();
+                handlePrefill();
             }
 
             @Override
@@ -95,7 +109,26 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
         });
     }
 
-    /** uci 读不到 eqos 配置,最常见的原因是插件没装 */
+    /** 终端详情页带目标跳入:已有规则直接打开编辑,没有则预填新增表单(只处理一次) */
+    private void handlePrefill() {
+        if (prefillHandled) return;
+        String target = getIntent().getStringExtra(EXTRA_TARGET);
+        if (target == null || target.isEmpty()) return;
+        prefillHandled = true;
+        for (EqosDevice d : devices) {
+            if (target.equals(d.target)) {
+                editDevice(d, false);
+                return;
+            }
+        }
+        EqosDevice prefilled = new EqosDevice();
+        prefilled.target = target;
+        String name = getIntent().getStringExtra(EXTRA_DEVICE_NAME);
+        if (name != null && !name.equals(target)) prefilled.comment = name;
+        editDevice(prefilled, true);
+    }
+
+    /** uci 读不到 eqosplus 配置,最常见的原因是插件没装 */
     private String friendlyMessage(ApiError error) {
         if (error.getType() == ApiError.Type.CONFIG_NOT_FOUND) {
             return getString(R.string.eqos_not_configured);
@@ -119,7 +152,7 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
         suppressSwitchCallback = false;
         toggle.setOnCheckedChangeListener((btn, checked) -> {
             if (suppressSwitchCallback) return;
-            EqosGlobal next = new EqosGlobal(checked, global.download, global.upload);
+            EqosGlobal next = copyGlobal(checked);
             saveGlobal(next, ok -> {
                 if (!ok) {
                     suppressSwitchCallback = true;
@@ -153,13 +186,19 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
         }
     }
 
+    private EqosGlobal copyGlobal(boolean enabled) {
+        EqosGlobal g = new EqosGlobal(enabled, global.download, global.upload, global.ifname);
+        g.section = global.section;
+        return g;
+    }
+
     private View bandwidthRow(boolean isDownload) {
         View row = LayoutInflater.from(this)
                 .inflate(R.layout.view_value_row, globalContainer, false);
         ((TextView) row.findViewById(R.id.row_label))
                 .setText(isDownload ? R.string.eqos_wan_down : R.string.eqos_wan_up);
         ((TextView) row.findViewById(R.id.row_value)).setText(
-                (isDownload ? global.download : global.upload) + " Mbit/s");
+                (isDownload ? global.download : global.upload) + " MB/s");
         row.setOnClickListener(v -> editBandwidth(isDownload));
         return row;
     }
@@ -174,9 +213,12 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
                 : getString(R.string.eqos_disabled_suffix, device.displayName()));
         name.setTextColor(getColor(device.enabled
                 ? R.color.label_primary : R.color.label_secondary));
-        String ipPart = device.displayName().equals(device.ip) ? "" : device.ip + "   ";
-        detail.setText(String.format(Locale.US, "%s↓ %d  ↑ %d Mbit/s",
-                ipPart, device.download, device.upload));
+        String targetPart = device.displayName().equals(device.target) ? "" : device.target + "   ";
+        StringBuilder sb = new StringBuilder(String.format(Locale.US, "%s↓ %s  ↑ %s MB/s",
+                targetPart, device.download, device.upload));
+        String schedule = scheduleSummary(device);
+        if (!schedule.isEmpty()) sb.append("   ").append(schedule);
+        detail.setText(sb.toString());
         row.setOnClickListener(v -> editDevice(device, false));
         row.setOnLongClickListener(v -> {
             confirmDelete(device);
@@ -185,26 +227,52 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
         return row;
     }
 
+    /** 非默认星期/时段才在行里给出摘要,默认(每天全天)不占地方 */
+    private String scheduleSummary(EqosDevice d) {
+        boolean allDay = ("00:00".equals(d.timeStart) || d.timeStart.isEmpty())
+                && ("23:55".equals(d.timeEnd) || "23:59".equals(d.timeEnd) || d.timeEnd.isEmpty());
+        String week = weekLabel(d.week);
+        if (allDay && "0".equals(d.week == null || d.week.isEmpty() ? "0" : d.week)) return "";
+        StringBuilder sb = new StringBuilder();
+        if (!"0".equals(d.week == null || d.week.isEmpty() ? "0" : d.week)) sb.append(week);
+        if (!allDay) {
+            if (sb.length() > 0) sb.append(" ");
+            sb.append(d.timeStart).append("–").append(d.timeEnd);
+        }
+        return sb.toString();
+    }
+
+    private String weekLabel(String week) {
+        String[] labels = getResources().getStringArray(R.array.eqos_week_labels);
+        String w = week == null || week.isEmpty() ? "0" : week;
+        for (int i = 0; i < WEEK_VALUES.length && i < labels.length; i++) {
+            if (WEEK_VALUES[i].equals(w)) return labels[i];
+        }
+        return w;
+    }
+
     // =====================================================================
     // 全局设置
     // =====================================================================
 
     private void editBandwidth(boolean isDownload) {
-        int current = isDownload ? global.download : global.upload;
-        EditText input = numberInput(String.valueOf(current));
+        EditText input = decimalInput(isDownload ? global.download : global.upload);
         new MaterialAlertDialogBuilder(this)
                 .setTitle(isDownload ? R.string.eqos_wan_down : R.string.eqos_wan_up)
                 .setMessage(R.string.eqos_bandwidth_hint)
                 .setView(wrap(input))
                 .setPositiveButton(R.string.ok, (d, w) -> {
-                    int value = parseInt(input.getText().toString());
-                    if (value <= 0) {
+                    String value = input.getText().toString().trim();
+                    if (!isPositiveRate(value)) {
                         error(getString(R.string.eqos_positive_required));
                         return;
                     }
-                    EqosGlobal next = new EqosGlobal(global.enabled,
-                            isDownload ? value : global.download,
-                            isDownload ? global.upload : value);
+                    EqosGlobal next = copyGlobal(global.enabled);
+                    if (isDownload) {
+                        next.download = normalizeRate(value);
+                    } else {
+                        next.upload = normalizeRate(value);
+                    }
                     saveGlobal(next, ok -> {
                     });
                 })
@@ -261,7 +329,7 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
                 .load(all -> {
                     // 已经限速过的不再列出来
                     Set<String> limited = new HashSet<>();
-                    for (EqosDevice d : devices) limited.add(d.ip);
+                    for (EqosDevice d : devices) limited.add(d.target);
                     List<ConnectedDevice> candidates = new ArrayList<>();
                     for (ConnectedDevice d : all) {
                         if (d.ipAddress == null || limited.contains(d.ipAddress)) continue;
@@ -283,7 +351,7 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
                             .setItems(labels, (dialog, which) -> {
                                 ConnectedDevice d = candidates.get(which);
                                 EqosDevice prefilled = new EqosDevice();
-                                prefilled.ip = d.ipAddress;
+                                prefilled.target = d.ipAddress;
                                 prefilled.comment = d.getPrimaryTitle().equals(d.ipAddress)
                                         ? "" : d.getPrimaryTitle();
                                 editDevice(prefilled, true);
@@ -302,45 +370,100 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
 
         EditText comment = textInput(getString(R.string.eqos_comment_hint),
                 existing != null ? existing.comment : "");
-        EditText ip = textInput(getString(R.string.eqos_ip_hint),
-                existing != null ? existing.ip : "");
-        // 已有条目的 IP 就是 uci 里的匹配键,改它等于换一台设备,容易误操作
-        ip.setEnabled(creating);
-        EditText down = numberInput(existing != null && existing.download > 0
-                ? String.valueOf(existing.download) : "");
+        EditText target = textInput(getString(R.string.eqos_target_hint),
+                existing != null ? existing.target : "");
+        // 已有条目的目标就是 uci 里的匹配键,改它等于换一条规则,容易误操作
+        target.setEnabled(creating);
+        EditText down = decimalInput(existing != null ? existing.download : "");
         down.setHint(R.string.eqos_down_hint);
-        EditText up = numberInput(existing != null && existing.upload > 0
-                ? String.valueOf(existing.upload) : "");
+        EditText up = decimalInput(existing != null ? existing.upload : "");
         up.setHint(R.string.eqos_up_hint);
+
+        // 星期:预置选项;遇到网页端填的自定义组合(如 1,3,5)原样保留为首项
+        String currentWeek = existing != null && existing.week != null && !existing.week.isEmpty()
+                ? existing.week : "0";
+        List<String> weekValues = new ArrayList<>();
+        List<String> weekLabels = new ArrayList<>();
+        String[] presetLabels = getResources().getStringArray(R.array.eqos_week_labels);
+        int selectedWeek = -1;
+        for (int i = 0; i < WEEK_VALUES.length; i++) {
+            weekValues.add(WEEK_VALUES[i]);
+            weekLabels.add(i < presetLabels.length ? presetLabels[i] : WEEK_VALUES[i]);
+            if (WEEK_VALUES[i].equals(currentWeek)) selectedWeek = i;
+        }
+        if (selectedWeek < 0) {
+            weekValues.add(0, currentWeek);
+            weekLabels.add(0, currentWeek);
+            selectedWeek = 0;
+        }
+        TextView weekTitle = new TextView(this);
+        weekTitle.setText(R.string.eqos_week_label);
+        weekTitle.setTextSize(13);
+        weekTitle.setTextColor(getColor(R.color.label_secondary));
+        weekTitle.setPadding(0, dp(10), 0, 0);
+        Spinner week = new Spinner(this);
+        week.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, weekLabels));
+        week.setSelection(selectedWeek);
+
+        LinearLayout timeRow = new LinearLayout(this);
+        timeRow.setOrientation(LinearLayout.HORIZONTAL);
+        EditText start = textInput("00:00", existing != null ? existing.timeStart : "00:00");
+        EditText end = textInput("23:55", existing != null ? existing.timeEnd : "23:55");
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        timeRow.addView(start, half);
+        timeRow.addView(end, half);
+
+        TextView timeTitle = new TextView(this);
+        timeTitle.setText(R.string.eqos_time_label);
+        timeTitle.setTextSize(13);
+        timeTitle.setTextColor(getColor(R.color.label_secondary));
+        timeTitle.setPadding(0, dp(10), 0, 0);
+
         form.addView(comment);
-        form.addView(ip);
+        form.addView(target);
         form.addView(down);
         form.addView(up);
+        form.addView(weekTitle);
+        form.addView(week);
+        form.addView(timeTitle);
+        form.addView(timeRow);
 
         new MaterialAlertDialogBuilder(this)
                 .setTitle(creating ? R.string.eqos_add_device : R.string.eqos_edit_device)
                 .setMessage(R.string.eqos_device_hint)
                 .setView(form)
                 .setPositiveButton(R.string.btn_save, (d, w) -> {
-                    String ipText = ip.getText().toString().trim();
-                    int downValue = parseInt(down.getText().toString());
-                    int upValue = parseInt(up.getText().toString());
-                    if (!isValidIPv4(ipText)) {
-                        error(getString(R.string.eqos_invalid_ip));
+                    String targetText = target.getText().toString().trim();
+                    String downText = down.getText().toString().trim();
+                    String upText = up.getText().toString().trim();
+                    if (!isValidTarget(targetText)) {
+                        error(getString(R.string.eqos_invalid_target));
                         return;
                     }
-                    // eqos 要求两个方向都填且 >= 1(datatype and(uinteger,min(1))),填 0 会被插件拒掉
-                    if (downValue < 1 || upValue < 1) {
+                    // eqosplus 允许单个方向为 0(=该方向不限),但两个不能同时为 0/空
+                    if (!isNonNegativeRate(downText) || !isNonNegativeRate(upText)
+                            || (parseRate(downText) == 0 && parseRate(upText) == 0)) {
                         error(getString(R.string.eqos_both_required));
+                        return;
+                    }
+                    String startText = start.getText().toString().trim();
+                    String endText = end.getText().toString().trim();
+                    if (!isValidClock(startText) || !isValidClock(endText)) {
+                        error(getString(R.string.eqos_invalid_time));
                         return;
                     }
                     EqosDevice device = new EqosDevice();
                     device.section = existing != null ? existing.section : "";
                     device.enabled = existing == null || existing.enabled;
-                    device.ip = ipText;
-                    device.download = downValue;
-                    device.upload = upValue;
+                    device.target = targetText;
+                    device.download = normalizeRate(downText);
+                    device.upload = normalizeRate(upText);
                     device.comment = comment.getText().toString().trim();
+                    device.week = weekValues.get(week.getSelectedItemPosition());
+                    device.timeStart = startText;
+                    device.timeEnd = endText;
                     if (creating) {
                         createDevice(device);
                     } else {
@@ -403,6 +526,30 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
     // 工具
     // =====================================================================
 
+    /** 目标可以是单个 IPv4、MAC、IP 段(a-b)或带掩码的 IPv4(a/n) */
+    static boolean isValidTarget(String s) {
+        if (s == null) return false;
+        String t = s.trim();
+        if (t.isEmpty()) return false;
+        if (t.matches("(?i)^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")) return true;
+        int dash = t.indexOf('-');
+        if (dash > 0) {
+            return isValidIPv4(t.substring(0, dash).trim())
+                    && isValidIPv4(t.substring(dash + 1).trim());
+        }
+        int slash = t.indexOf('/');
+        if (slash > 0) {
+            if (!isValidIPv4(t.substring(0, slash).trim())) return false;
+            try {
+                int mask = Integer.parseInt(t.substring(slash + 1).trim());
+                return mask >= 0 && mask <= 32;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        return isValidIPv4(t);
+    }
+
     static boolean isValidIPv4(String s) {
         if (s == null) return false;
         String[] parts = s.split("\\.", -1);
@@ -418,17 +565,47 @@ public class DeviceRateLimitActivity extends AppCompatActivity {
         return true;
     }
 
-    private static int parseInt(String s) {
+    static boolean isValidClock(String s) {
+        if (s == null) return false;
+        String[] parts = s.trim().split(":", -1);
+        if (parts.length != 2) return false;
         try {
-            return Integer.parseInt(s.trim());
-        } catch (Exception e) {
-            return 0;
+            int h = Integer.parseInt(parts[0]);
+            int m = Integer.parseInt(parts[1]);
+            return h >= 0 && h <= 24 && m >= 0 && m <= 59 && (h != 24 || m == 0);
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
-    private EditText numberInput(String value) {
+    private static double parseRate(String s) {
+        try {
+            return Double.parseDouble(s.trim());
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private static boolean isPositiveRate(String s) {
+        return parseRate(s) > 0;
+    }
+
+    private static boolean isNonNegativeRate(String s) {
+        return s != null && !s.trim().isEmpty() && parseRate(s) >= 0;
+    }
+
+    /** 规整速率文本:去掉无意义的小数尾零(1.50 → 1.5,2.0 → 2) */
+    static String normalizeRate(String s) {
+        double v = parseRate(s);
+        if (v < 0) return s == null ? "" : s.trim();
+        if (v == Math.floor(v) && v < 1e15) return String.valueOf((long) v);
+        String out = String.valueOf(v);
+        return out;
+    }
+
+    private EditText decimalInput(String value) {
         EditText e = new EditText(this);
-        e.setInputType(InputType.TYPE_CLASS_NUMBER);
+        e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         e.setText(value);
         return e;
     }

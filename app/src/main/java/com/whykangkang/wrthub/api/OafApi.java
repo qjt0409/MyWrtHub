@@ -156,6 +156,97 @@ public final class OafApi {
         public final List<Record> list = new ArrayList<>();
     }
 
+    /**
+     * 一台终端(get_all_users,flag=3 的完整字段),对应 OPAssistant「终端」页。
+     * 速率单位是字节/秒(内核每 2 秒采样差值的一半);协议里没有「历史累计
+     * 总流量」,OPAssistant 卡片上的流量数字就是今日上下行之和,不要自创口径。
+     */
+    public static final class FwxUser {
+        public String mac = "";
+        public boolean online;
+        public boolean active;
+        public boolean isWireless;
+        public int session;
+        /** 家长控制状态:unlimited / app_limited / mac_blocked */
+        public String pcStatusKey = "";
+        public boolean inBlacklist;
+        public boolean afWhitelist;
+        public boolean mfWhitelist;
+        public String ip = "";
+        public String ipv6 = "";
+        public String hostname = "";
+        public String nickname = "";
+        public long upRate;
+        public long downRate;
+        public int rssi;
+        public long rxRate;
+        public long txRate;
+        public String band = "";
+        public long todayUpBytes;
+        public long todayDownBytes;
+        public long todayActiveSec;
+        /** 当前正在访问的应用(没有时为空串) */
+        public String currentApp = "";
+        public int currentAppId;
+        /** 当前正在访问的地址(没有时为空串) */
+        public String url = "";
+        /** 常用 App Top5(按累计访问时长排序) */
+        public final List<App> apps = new ArrayList<>();
+        /** 服务端原始对象,传给详情页免得再拼一遍 */
+        public JsonObject raw = new JsonObject();
+
+        /** 显示名优先级与 OPAssistant 一致:nickname → hostname → mac */
+        public String displayName() {
+            if (!nickname.isEmpty() && !"--".equals(nickname)) return nickname;
+            if (!hostname.isEmpty() && !"--".equals(hostname)) return hostname;
+            return mac;
+        }
+
+        public long todayTotalBytes() {
+            return todayUpBytes + todayDownBytes;
+        }
+    }
+
+    /** 一条命中某设备的管控规则(家长控制聚合,只读展示) */
+    public static final class ParentalRule {
+        /** appfilter / macfilter / blacklist */
+        public String module = "";
+        public String ruleName = "";
+        /** time_range / duration / flow / blacklist */
+        public String conditionType = "";
+        public JsonObject condition = new JsonObject();
+        public JsonObject todayStatus = new JsonObject();
+    }
+
+    /** 某设备的管控规则聚合(白名单标记 + 规则列表) */
+    public static final class ParentalRules {
+        public boolean afWhitelist;
+        public boolean mfWhitelist;
+        public final List<ParentalRule> list = new ArrayList<>();
+    }
+
+    /** App统计:某设备对某 App 的累计访问时长(秒) */
+    public static final class AppTime {
+        public int id;
+        public String name = "";
+        public long seconds;
+    }
+
+    /** 今日流量里某小时的一个 Top 应用 */
+    public static final class HourApp {
+        public int appid;
+        public String name = "";
+        public long seconds;
+    }
+
+    /** 今日流量:一个小时桶的上下行字节 + Top 应用 */
+    public static final class HourStat {
+        public int hour;
+        public long upBytes;
+        public long downBytes;
+        public final List<HourApp> apps = new ArrayList<>();
+    }
+
     private OafApi() {
     }
 
@@ -499,6 +590,241 @@ public final class OafApi {
             p.list.add(r);
         }
         return p;
+    }
+
+    // =====================================================================
+    // 终端(OPAssistant 同款:get_all_users flag=3 + 设备详情各接口)
+    // =====================================================================
+
+    /** 终端列表:flag=3 才带速率/今日统计/常用应用,page_size 与 OPAssistant 一致取 50 */
+    public static void loadUsers(ApiCallback<List<FwxUser>> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("flag", 3);
+        data.addProperty("page", 1);
+        data.addProperty("page_size", 50);
+        call("get_all_users", data, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject d) {
+                cb.onSuccess(parseUsers(d));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 可单测:get_all_users 的 data → 终端列表(保持服务端顺序,排序在界面层做) */
+    public static List<FwxUser> parseUsers(JsonObject data) {
+        List<FwxUser> out = new ArrayList<>();
+        if (data == null || !data.has("list") || !data.get("list").isJsonArray()) return out;
+        for (JsonElement el : data.getAsJsonArray("list")) {
+            if (!el.isJsonObject()) continue;
+            JsonObject o = el.getAsJsonObject();
+            FwxUser u = new FwxUser();
+            u.raw = JsonParser.parseString(o.toString()).getAsJsonObject();
+            u.mac = str(o, "mac");
+            u.online = num(o, "online") != 0;
+            u.active = num(o, "active") != 0;
+            u.isWireless = num(o, "is_wireless") != 0;
+            u.session = (int) num(o, "session");
+            u.pcStatusKey = str(o, "pc_status_key");
+            u.inBlacklist = num(o, "in_blacklist") != 0;
+            u.afWhitelist = num(o, "af_whitelist") != 0;
+            u.mfWhitelist = num(o, "mf_whitelist") != 0;
+            u.ip = str(o, "ip");
+            u.ipv6 = str(o, "ipv6");
+            u.hostname = str(o, "hostname");
+            u.nickname = str(o, "nickname");
+            u.upRate = num(o, "up_rate");
+            u.downRate = num(o, "down_rate");
+            u.rssi = (int) num(o, "rssi");
+            u.rxRate = num(o, "rx_rate");
+            u.txRate = num(o, "tx_rate");
+            u.band = str(o, "band");
+            u.todayUpBytes = num(o, "today_up_bytes");
+            u.todayDownBytes = num(o, "today_down_bytes");
+            u.todayActiveSec = num(o, "today_active_time");
+            u.currentApp = str(o, "app");
+            u.currentAppId = (int) num(o, "app_id");
+            u.url = str(o, "url");
+            if (o.has("applist") && o.get("applist").isJsonArray()) {
+                for (JsonElement a : o.getAsJsonArray("applist")) {
+                    if (!a.isJsonObject()) continue;
+                    JsonObject ao = a.getAsJsonObject();
+                    u.apps.add(new App((int) num(ao, "id"), str(ao, "name")));
+                }
+            }
+            if (!u.mac.isEmpty()) out.add(u);
+        }
+        return out;
+    }
+
+    /** 详情·管控规则:命中该设备且启用的规则 + 今日执行状态 */
+    public static void loadParentalRules(String mac, ApiCallback<ParentalRules> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("mac", mac);
+        call("get_user_parental_control_rules", data, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject d) {
+                cb.onSuccess(parseParentalRules(d));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 可单测:get_user_parental_control_rules 的 data → 聚合对象 */
+    public static ParentalRules parseParentalRules(JsonObject data) {
+        ParentalRules out = new ParentalRules();
+        if (data == null) return out;
+        out.afWhitelist = num(data, "af_whitelist") != 0;
+        out.mfWhitelist = num(data, "mf_whitelist") != 0;
+        if (!data.has("list") || !data.get("list").isJsonArray()) return out;
+        for (JsonElement el : data.getAsJsonArray("list")) {
+            if (!el.isJsonObject()) continue;
+            JsonObject o = el.getAsJsonObject();
+            ParentalRule r = new ParentalRule();
+            r.module = str(o, "module");
+            r.ruleName = str(o, "rule_name");
+            r.conditionType = str(o, "condition_type");
+            if (o.has("condition") && o.get("condition").isJsonObject()) {
+                r.condition = o.getAsJsonObject("condition");
+            }
+            if (o.has("today_status") && o.get("today_status").isJsonObject()) {
+                r.todayStatus = o.getAsJsonObject("today_status");
+            }
+            out.list.add(r);
+        }
+        return out;
+    }
+
+    /** 详情·App统计:各 App 累计访问时长,按时长降序返回 */
+    public static void loadDevVisitTime(String mac, ApiCallback<List<AppTime>> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("mac", mac);
+        call("dev_visit_time", data, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject d) {
+                cb.onSuccess(parseDevVisitTime(d));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 可单测:dev_visit_time 的 data → 时长列表(降序) */
+    public static List<AppTime> parseDevVisitTime(JsonObject data) {
+        List<AppTime> out = new ArrayList<>();
+        if (data == null || !data.has("list") || !data.get("list").isJsonArray()) return out;
+        for (JsonElement el : data.getAsJsonArray("list")) {
+            if (!el.isJsonObject()) continue;
+            JsonObject o = el.getAsJsonObject();
+            AppTime t = new AppTime();
+            t.id = (int) num(o, "id");
+            t.name = str(o, "name");
+            t.seconds = num(o, "t");
+            out.add(t);
+        }
+        out.sort((a, b) -> Long.compare(b.seconds, a.seconds));
+        return out;
+    }
+
+    /** 详情·今日流量 + 常用App:24 个小时桶(两页签共用一次请求) */
+    public static void loadHourlyTopApps(String mac, ApiCallback<List<HourStat>> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("mac", mac);
+        call("get_hourly_top_apps", data, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject d) {
+                cb.onSuccess(parseHourly(d));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 可单测:get_hourly_top_apps 的 data → 小时桶列表 */
+    public static List<HourStat> parseHourly(JsonObject data) {
+        List<HourStat> out = new ArrayList<>();
+        if (data == null || !data.has("hourly_stats")
+                || !data.get("hourly_stats").isJsonArray()) return out;
+        for (JsonElement el : data.getAsJsonArray("hourly_stats")) {
+            if (!el.isJsonObject()) continue;
+            JsonObject o = el.getAsJsonObject();
+            HourStat h = new HourStat();
+            h.hour = (int) num(o, "hour");
+            if (o.has("traffic") && o.get("traffic").isJsonObject()) {
+                JsonObject t = o.getAsJsonObject("traffic");
+                h.upBytes = num(t, "up_bytes");
+                h.downBytes = num(t, "down_bytes");
+            }
+            if (o.has("apps") && o.get("apps").isJsonArray()) {
+                for (JsonElement a : o.getAsJsonArray("apps")) {
+                    if (!a.isJsonObject()) continue;
+                    JsonObject ao = a.getAsJsonObject();
+                    HourApp ha = new HourApp();
+                    ha.appid = (int) num(ao, "appid");
+                    ha.name = str(ao, "name");
+                    ha.seconds = num(ao, "time");
+                    h.apps.add(ha);
+                }
+            }
+            out.add(h);
+        }
+        return out;
+    }
+
+    /** 详情·应用记录:单设备的访问记录分页(字段与全局记录同构) */
+    public static void loadDevRecords(String mac, int page, ApiCallback<RecordPage> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("mac", mac);
+        data.addProperty("page", page);
+        data.addProperty("page_size", 15);
+        call("dev_visit_list", data, recordPageCallback(cb));
+    }
+
+    // =====================================================================
+    // 上网黑名单(终端页「拉黑」走 fwx,不是防火墙规则)
+    // =====================================================================
+
+    public static void loadMacBlacklist(ApiCallback<List<DeviceEntry>> cb) {
+        call("get_mac_blacklist", new JsonObject(), new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject data) {
+                cb.onSuccess(parseDeviceList(data));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 拉黑:入参是 mac_list 数组(与解除的单值 mac 不同,别混) */
+    public static void addMacBlacklist(String mac, ApiCallback<JsonObject> cb) {
+        JsonObject data = new JsonObject();
+        JsonArray arr = new JsonArray();
+        arr.add(mac);
+        data.add("mac_list", arr);
+        call("add_mac_blacklist", data, cb);
+    }
+
+    public static void delMacBlacklist(String mac, ApiCallback<JsonObject> cb) {
+        JsonObject data = new JsonObject();
+        data.addProperty("mac", mac);
+        call("del_mac_blacklist", data, cb);
     }
 
     /** 记录总开关:读 get_record_base,写 set_record_base 时其余字段原样带回 */

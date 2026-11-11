@@ -4,7 +4,10 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -28,6 +31,7 @@ import com.whykangkang.wrthub.R;
 import com.whykangkang.wrthub.api.ApiCallback;
 import com.whykangkang.wrthub.api.ApiError;
 import com.whykangkang.wrthub.api.ArpScanApi;
+import com.whykangkang.wrthub.api.OafApi;
 import com.whykangkang.wrthub.api.OpenWrtApi;
 import com.whykangkang.wrthub.manager.BlacklistDateStore;
 import com.whykangkang.wrthub.manager.DeviceNameStore;
@@ -46,20 +50,31 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 设备页,对应 iOS DevicesViewController。
+ * 终端页(OPAssistant 同款):主数据来自 OpenAppFilter 的 fwx
+ * get_all_users(flag=3)——实时上下行速率、今日流量、今日活跃时长、
+ * 常用 App、在线/活跃状态,3 秒轮询刷新;DHCP 租约 + WiFi 关联列表
+ * 只做补充(信号/SSID/本机标记),租约里有、fwx 里没有的设备排在后面,
+ * 点开走老详情。fwx 不可用(没装 OpenAppFilter)时整页退回租约列表。
  *
- * 设备卡片(主机名/IP/MAC/信号格/SSID/本机徽章/流量)、点击详情(重命名 / 加入或
- * 移出黑名单)、右上角黑名单入口与 arp-scan 深度扫描。
+ * 原有的防火墙黑名单(BlacklistActivity)是本 App 自己的一套封禁,
+ * 与终端详情里的 fwx 上网黑名单是两回事,不要混。
  */
 public class DevicesFragment extends Fragment {
 
     private SwipeRefreshLayout swipeRefresh;
+    private TextView summaryView;
     private DeviceAdapter adapter;
     private ConnectedDeviceLoader loader;
     private boolean loading;
 
+    /** 租约/扫描侧的设备(补充信息来源 + fwx 没有时的兜底列表) */
     private final List<ConnectedDevice> devices = new ArrayList<>();
-    /** 已封禁的 MAC(大写),来自防火墙规则 */
+    /** fwx 终端列表(主数据) */
+    private final List<OafApi.FwxUser> users = new ArrayList<>();
+    private boolean usersLoaded;
+    /** 合并后的行:fwx 终端在前,仅租约设备在后 */
+    private final List<Row> rows = new ArrayList<>();
+    /** 已封禁的 MAC(大写),来自防火墙规则(老详情弹窗用) */
     private final Set<String> blacklistedMacs = new HashSet<>();
     /** MAC(大写) -> 封禁规则的 uci section,解除时用 */
     private final Map<String, String> blockSections = new HashMap<>();
@@ -68,6 +83,27 @@ public class DevicesFragment extends Fragment {
     /** 只有扫描发现、租约里没有的 MAC */
     private final Set<String> scanOnlyMacs = new HashSet<>();
 
+    private final Handler pollHandler = new Handler(Looper.getMainLooper());
+    private final Runnable pollTask = new Runnable() {
+        @Override
+        public void run() {
+            if (!isAdded()) return;
+            refreshUsers(null);
+            pollHandler.postDelayed(this, 3000);
+        }
+    };
+
+    /** 一行 = 一台终端;user 为 null 表示只有租约/扫描数据 */
+    private static final class Row {
+        final OafApi.FwxUser user;
+        final ConnectedDevice conn;
+
+        Row(OafApi.FwxUser user, ConnectedDevice conn) {
+            this.user = user;
+            this.conn = conn;
+        }
+    }
+
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater,
@@ -75,6 +111,7 @@ public class DevicesFragment extends Fragment {
                              @Nullable Bundle savedInstanceState) {
         View root = inflater.inflate(R.layout.fragment_devices, container, false);
         swipeRefresh = root.findViewById(R.id.swipe_refresh);
+        summaryView = root.findViewById(R.id.devices_summary);
         RecyclerView list = root.findViewById(R.id.devices_list);
         adapter = new DeviceAdapter();
         list.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -94,6 +131,14 @@ public class DevicesFragment extends Fragment {
         String localIp = NetworkUtils.getLocalIpv4(requireContext());
         loader = new ConnectedDeviceLoader(OpenWrtApi.getInstance(), localIp);
         reload();
+        pollHandler.removeCallbacks(pollTask);
+        pollHandler.postDelayed(pollTask, 3000);
+    }
+
+    @Override
+    public void onPause() {
+        pollHandler.removeCallbacks(pollTask);
+        super.onPause();
     }
 
     // =====================================================================
@@ -108,15 +153,97 @@ public class DevicesFragment extends Fragment {
         loading = true;
         swipeRefresh.setRefreshing(true);
         loadBlacklist(() -> loader.load(result -> {
-            loading = false;
-            if (!isAdded()) return;
-            swipeRefresh.setRefreshing(false);
             devices.clear();
             devices.addAll(result);
             // 刷新会用租约列表覆盖 devices,把之前扫到的额外设备再并回去
             mergeScanResults();
-            adapter.notifyDataSetChanged();
+            refreshUsers(() -> {
+                loading = false;
+                if (!isAdded()) return;
+                swipeRefresh.setRefreshing(false);
+            });
         }));
+    }
+
+    /** 拉一次 fwx 终端列表并重建行;失败时保留上次结果(轮询不清空界面) */
+    private void refreshUsers(@Nullable Runnable done) {
+        if (!OpenWrtApi.getInstance().isConfigured()) {
+            if (done != null) done.run();
+            return;
+        }
+        OafApi.loadUsers(new ApiCallback<List<OafApi.FwxUser>>() {
+            @Override
+            public void onSuccess(List<OafApi.FwxUser> list) {
+                users.clear();
+                users.addAll(list);
+                usersLoaded = true;
+                rebuildRows();
+                if (isAdded()) adapter.notifyDataSetChanged();
+                if (done != null) done.run();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                // fwx 不可用:整页退回租约列表(行重建一次即可)
+                if (!usersLoaded) {
+                    users.clear();
+                    rebuildRows();
+                    if (isAdded()) adapter.notifyDataSetChanged();
+                }
+                if (done != null) done.run();
+            }
+        });
+    }
+
+    /** fwx 终端(按 活跃→在线→离线 排序)在前,仅租约设备补在后面 */
+    private void rebuildRows() {
+        Map<String, ConnectedDevice> connByMac = new HashMap<>();
+        for (ConnectedDevice d : devices) {
+            if (d.macAddress != null) {
+                connByMac.put(d.macAddress.toLowerCase(Locale.ROOT), d);
+            }
+        }
+        List<OafApi.FwxUser> sorted = new ArrayList<>(users);
+        sorted.sort((a, b) -> Integer.compare(rank(a), rank(b)));
+
+        rows.clear();
+        Set<String> seen = new HashSet<>();
+        for (OafApi.FwxUser u : sorted) {
+            String key = u.mac.toLowerCase(Locale.ROOT);
+            seen.add(key);
+            rows.add(new Row(u, connByMac.get(key)));
+        }
+        for (ConnectedDevice d : devices) {
+            if (d.macAddress != null && seen.contains(d.macAddress.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            rows.add(new Row(null, d));
+        }
+        updateSummary();
+    }
+
+    private static int rank(OafApi.FwxUser u) {
+        if (u.online && u.active) return 0;
+        if (u.online) return 1;
+        return 2;
+    }
+
+    private void updateSummary() {
+        if (summaryView == null) return;
+        if (!usersLoaded) {
+            summaryView.setVisibility(View.GONE);
+            return;
+        }
+        int online = 0;
+        int active = 0;
+        for (OafApi.FwxUser u : users) {
+            if (u.online) {
+                online++;
+                if (u.active) active++;
+            }
+        }
+        summaryView.setVisibility(View.VISIBLE);
+        summaryView.setText(getString(R.string.term_summary, users.size(), online, active));
     }
 
     /** 读防火墙里由本 App 添加的封禁规则,拿到 MAC 集合与 section 映射 */
@@ -191,17 +318,18 @@ public class DevicesFragment extends Fragment {
     private void applyScanResults(List<ArpScanApi.Entry> entries) {
         scanEntries.clear();
         scanEntries.addAll(entries);
-        int before = devices.size();
+        int before = rows.size();
         mergeScanResults();
+        rebuildRows();
         adapter.notifyDataSetChanged();
-        int added = devices.size() - before;
+        int added = rows.size() - before;
         alert(added > 0
                 ? getString(R.string.scan_deep_found, entries.size(), added)
                 : getString(R.string.scan_deep_found_none, entries.size()));
     }
 
     /**
-     * 把扫描到、但租约列表里没有的设备并入列表。
+     * 把扫描到、但租约列表里没有的设备并入 devices。
      * 幂等:重复调用(每次刷新后都会调)不会产生重复行。
      */
     private void mergeScanResults() {
@@ -211,17 +339,15 @@ public class DevicesFragment extends Fragment {
         for (ConnectedDevice d : devices) {
             if (d.macAddress != null) known.add(d.macAddress.toUpperCase(Locale.ROOT));
         }
-        List<ConnectedDevice> extras = new ArrayList<>();
         for (ArpScanApi.Entry entry : scanEntries) {
             if (!known.add(entry.mac)) continue;
             ConnectedDevice d = new ConnectedDevice();
             d.ipAddress = entry.ip;
             d.macAddress = entry.mac;
             d.hostname = entry.vendor.isEmpty() ? null : entry.vendor;
-            extras.add(d);
+            devices.add(d);
             scanOnlyMacs.add(entry.mac);
         }
-        devices.addAll(extras);
     }
 
     private void showArpScanNotInstalled() {
@@ -253,12 +379,32 @@ public class DevicesFragment extends Fragment {
     }
 
     // =====================================================================
-    // 详情 / 重命名 / 黑名单
+    // 详情 / 重命名 / 黑名单(仅租约行走老详情;fwx 行进终端详情页)
     // =====================================================================
 
     private String displayName(ConnectedDevice d) {
         String custom = DeviceNameStore.get(requireContext(), d.macAddress);
         return custom != null ? custom : d.getPrimaryTitle();
+    }
+
+    private String displayName(OafApi.FwxUser u) {
+        String custom = DeviceNameStore.get(requireContext(), u.mac);
+        return custom != null ? custom : u.displayName();
+    }
+
+    private void openTerminalDetail(Row row) {
+        Intent intent = new Intent(requireContext(), TerminalDeviceActivity.class);
+        intent.putExtra(TerminalDeviceActivity.EXTRA_USER_JSON, row.user.raw.toString());
+        if (row.conn != null) {
+            if (row.conn.ssid != null) {
+                intent.putExtra(TerminalDeviceActivity.EXTRA_SSID, row.conn.ssid);
+            }
+            if (row.conn.signalDbm != null) {
+                intent.putExtra(TerminalDeviceActivity.EXTRA_SIGNAL, row.conn.signalDbm);
+            }
+            intent.putExtra(TerminalDeviceActivity.EXTRA_LOCAL, row.conn.isLocal);
+        }
+        startActivity(intent);
     }
 
     private void showDetail(ConnectedDevice d) {
@@ -284,7 +430,7 @@ public class DevicesFragment extends Fragment {
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(displayName(d))
                 .setMessage(sb.toString().trim())
-                .setNeutralButton(R.string.device_rename, (dialog, w) -> renameDevice(d))
+                .setNeutralButton(R.string.device_rename, (dialog, w) -> renameDevice(d.macAddress, d.getPrimaryTitle()))
                 .setNegativeButton(R.string.ok, null);
         // 本机设备不允许操作黑名单
         if (!d.isLocal && d.macAddress != null) {
@@ -301,11 +447,12 @@ public class DevicesFragment extends Fragment {
     }
 
     /** 重命名:自定义名按 MAC 存本地,留空恢复默认(主机名/IP) */
-    private void renameDevice(ConnectedDevice d) {
+    private void renameDevice(String mac, String hintName) {
+        if (mac == null) return;
         EditText input = new EditText(requireContext());
         input.setInputType(InputType.TYPE_CLASS_TEXT);
-        input.setHint(d.getPrimaryTitle());
-        String current = DeviceNameStore.get(requireContext(), d.macAddress);
+        input.setHint(hintName);
+        String current = DeviceNameStore.get(requireContext(), mac);
         if (current != null) input.setText(current);
         LinearLayout box = new LinearLayout(requireContext());
         int pad = Math.round(20 * getResources().getDisplayMetrics().density);
@@ -318,7 +465,7 @@ public class DevicesFragment extends Fragment {
                 .setMessage(R.string.device_rename_hint)
                 .setView(box)
                 .setPositiveButton(R.string.ok, (dialog, w) -> {
-                    DeviceNameStore.set(requireContext(), d.macAddress,
+                    DeviceNameStore.set(requireContext(), mac,
                             input.getText().toString());
                     adapter.notifyDataSetChanged();
                 })
@@ -401,25 +548,13 @@ public class DevicesFragment extends Fragment {
         sb.append(label).append(": ").append(value).append('\n');
     }
 
-    /** 列表里的租约行:租约 N小时M分 / 租约 M分钟(与 iOS connectedTimeString 一致) */
+    /** 列表里的租约行:租约 N小时M分 / 租约 M分钟 */
     private String leaseLine(long remainingSec) {
         int hours = (int) (remainingSec / 3600);
         int minutes = (int) ((remainingSec % 3600) / 60);
         return hours > 0
                 ? getString(R.string.lease_line_hm, hours, minutes)
                 : getString(R.string.lease_line_m, minutes);
-    }
-
-    /** 按主机名关键字猜设备类型图标,与 iOS NetworkDeviceCell.configure 同一套规则 */
-    private static int iconFor(String hostname) {
-        String name = hostname == null ? "" : hostname.toLowerCase(Locale.ROOT);
-        if (name.contains("iphone") || name.contains("ipad")) return R.drawable.ic_dev_phone;
-        if (name.contains("macbook") || name.contains("mac")) return R.drawable.ic_dev_laptop;
-        if (name.contains("watch")) return R.drawable.ic_dev_watch;
-        if (name.contains("tv")) return R.drawable.ic_dev_tv;
-        if (name.contains("oppo") || name.contains("android")) return R.drawable.ic_dev_phone;
-        if (name.contains("epson") || name.contains("printer")) return R.drawable.ic_dev_printer;
-        return R.drawable.ic_dev_network;
     }
 
     /** remaining 已经是剩余秒数,不要再和当前时间相减 */
@@ -430,60 +565,189 @@ public class DevicesFragment extends Fragment {
         return getString(R.string.lease_hm, hours, minutes);
     }
 
+    /** 今日活跃时长:15小时58分 / 58分钟 / 30秒 */
+    static String activeDuration(long sec) {
+        if (sec <= 0) return "0分钟";
+        long h = sec / 3600;
+        long m = (sec % 3600) / 60;
+        if (h > 0) return h + "小时" + m + "分";
+        if (m > 0) return m + "分钟";
+        return sec + "秒";
+    }
+
+    private static final int[] AVATAR_COLORS = {
+            0xFF1E88E5, 0xFF43A047, 0xFFFB8C00, 0xFF8E24AA, 0xFFE53935,
+            0xFF00ACC1, 0xFF5E35B1, 0xFF6D4C41, 0xFF3949AB, 0xFF00897B
+    };
+
+    /** 名字首个字母/数字(中文取首字),给头像与 App 方块用 */
+    static String firstLetter(String name) {
+        if (name == null) return "?";
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                return String.valueOf(Character.toUpperCase(c));
+            }
+        }
+        return "?";
+    }
+
+    static int colorFor(String seed) {
+        int h = seed == null ? 0 : (seed.hashCode() & 0x7fffffff);
+        return AVATAR_COLORS[h % AVATAR_COLORS.length];
+    }
+
+    private void setAvatar(TextView v, String name, String seed) {
+        v.setText(firstLetter(name));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(12 * getResources().getDisplayMetrics().density);
+        bg.setColor(colorFor(seed));
+        v.setBackground(bg);
+    }
+
+    // =====================================================================
+    // 列表
+    // =====================================================================
+
     private class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.Holder> {
 
         @NonNull
         @Override
         public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View v = LayoutInflater.from(parent.getContext())
-                    .inflate(R.layout.item_connected_device, parent, false);
+                    .inflate(R.layout.item_terminal_device, parent, false);
             return new Holder(v);
         }
 
         @Override
         public void onBindViewHolder(@NonNull Holder h, int position) {
-            ConnectedDevice d = devices.get(position);
+            Row row = rows.get(position);
+            if (row.user != null) {
+                bindUser(h, row);
+            } else {
+                bindConn(h, row.conn);
+            }
+        }
+
+        private void bindUser(Holder h, Row row) {
+            OafApi.FwxUser u = row.user;
+            String name = displayName(u);
+            setAvatar(h.avatar, name, u.mac);
+            h.title.setText(name);
+
+            // 状态徽标:活跃(绿)/ 在线(蓝)/ 离线(灰);被拉黑另有红徽章
+            if (u.online && u.active) {
+                h.badge.setText(R.string.term_active);
+                h.badge.setTextColor(requireContext().getColor(R.color.ios_green));
+            } else if (u.online) {
+                h.badge.setText(R.string.term_online);
+                h.badge.setTextColor(requireContext().getColor(R.color.ios_blue));
+            } else {
+                h.badge.setText(R.string.term_offline);
+                h.badge.setTextColor(requireContext().getColor(R.color.label_tertiary));
+            }
+            h.blockedBadge.setVisibility(u.inBlacklist ? View.VISIBLE : View.GONE);
+
+            h.ip.setVisibility(u.ip.isEmpty() ? View.GONE : View.VISIBLE);
+            h.ip.setText(u.ip);
+            h.rates.setVisibility(View.VISIBLE);
+            h.rates.setText("↑ " + Formatters.rate(u.upRate)
+                    + "   ↓ " + Formatters.rate(u.downRate));
+            h.meta.setVisibility(View.VISIBLE);
+            h.meta.setText("⏱ " + activeDuration(u.todayActiveSec)
+                    + "    ↕ " + Formatters.bytes(u.todayTotalBytes()));
+            bindAppBadges(h, u);
+
+            bindWifi(h, row.conn);
+            h.itemView.setOnClickListener(v -> openTerminalDetail(row));
+            h.itemView.setOnLongClickListener(v -> {
+                renameDevice(u.mac, u.displayName());
+                return true;
+            });
+        }
+
+        /** 当前应用 1 个 + 常用其余,最多 5 个彩色首字母方块(与 OPAssistant 一致) */
+        private void bindAppBadges(Holder h, OafApi.FwxUser u) {
+            h.apps.removeAllViews();
+            List<String> names = new ArrayList<>();
+            if (!u.currentApp.isEmpty()) names.add(u.currentApp);
+            for (OafApi.App a : u.apps) {
+                if (!names.contains(a.name)) names.add(a.name);
+                if (names.size() >= 5) break;
+            }
+            h.apps.setVisibility(names.isEmpty() ? View.GONE : View.VISIBLE);
+            float density = getResources().getDisplayMetrics().density;
+            for (String appName : names) {
+                TextView sq = new TextView(requireContext());
+                int size = Math.round(24 * density);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+                lp.setMarginEnd(Math.round(5 * density));
+                sq.setLayoutParams(lp);
+                sq.setGravity(android.view.Gravity.CENTER);
+                sq.setText(firstLetter(appName));
+                sq.setTextColor(0xFFFFFFFF);
+                sq.setTextSize(11);
+                sq.setTypeface(null, android.graphics.Typeface.BOLD);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setShape(GradientDrawable.RECTANGLE);
+                bg.setCornerRadius(6 * density);
+                bg.setColor(colorFor(appName));
+                sq.setBackground(bg);
+                h.apps.addView(sq);
+            }
+        }
+
+        private void bindConn(Holder h, ConnectedDevice d) {
             String mac = d.macAddress != null ? d.macAddress.toUpperCase(Locale.ROOT) : "";
             boolean blocked = blacklistedMacs.contains(mac);
             boolean scanOnly = scanOnlyMacs.contains(mac);
+            String name = displayName(d);
+            setAvatar(h.avatar, name, d.macAddress);
+            h.title.setText(name);
 
-            // 图标按主机名猜设备类型,颜色:黑名单红 / 本机绿 / 其余蓝
-            h.icon.setImageResource(iconFor(d.hostname));
-            h.icon.setColorFilter(requireContext().getColor(
-                    blocked ? R.color.ios_red : d.isLocal ? R.color.ios_green : R.color.ios_blue));
+            if (blocked) {
+                h.badge.setText(R.string.device_blocked_badge);
+                h.badge.setTextColor(requireContext().getColor(R.color.ios_red));
+            } else if (scanOnly) {
+                h.badge.setText(R.string.lease_from_scan);
+                h.badge.setTextColor(requireContext().getColor(R.color.label_tertiary));
+            } else {
+                h.badge.setText("");
+            }
+            h.blockedBadge.setVisibility(View.GONE);
 
-            // 标题:自定义名 > 主机名 > IP;标题已经是 IP 时不再重复一行
-            h.title.setText(displayName(d));
             String secondary = d.getSecondaryTitle();
             boolean customNamed = DeviceNameStore.get(requireContext(), d.macAddress) != null;
             if (secondary == null && customNamed) secondary = d.ipAddress;
+            if (secondary == null) secondary = d.ipAddress;
             h.ip.setVisibility(secondary != null ? View.VISIBLE : View.GONE);
             h.ip.setText(secondary);
-            h.mac.setText(d.macAddress);
+            h.rates.setVisibility(View.GONE);
 
-            // 扫描发现的设备显示来源;静态 IP / 无租约的干脆不占这一行,
-            // 不然半屏都是「租约 0分钟」
-            if (scanOnly) {
-                h.lease.setVisibility(View.VISIBLE);
-                h.lease.setText(R.string.lease_from_scan);
-            } else if (d.leaseRemainingSec >= 60) {
-                h.lease.setVisibility(View.VISIBLE);
-                h.lease.setText(leaseLine(d.leaseRemainingSec));
-            } else {
-                h.lease.setVisibility(View.GONE);
-            }
-
-            h.localBadge.setVisibility(d.isLocal ? View.VISIBLE : View.GONE);
-            h.blockedBadge.setVisibility(blocked ? View.VISIBLE : View.GONE);
-
-            // 黑名单徽章与流量互斥,免得右侧挤成一团(iOS 同款规则)
+            // 租约行:静态 IP / 无租约的不占这一行,不然半屏都是「租约 0分钟」
             long total = d.rxBytes + d.txBytes;
-            boolean showTraffic = !blocked && total > 0;
-            h.traffic.setVisibility(showTraffic ? View.VISIBLE : View.GONE);
-            if (showTraffic) h.traffic.setText(Formatters.bytes(total));
+            if (d.leaseRemainingSec >= 60) {
+                h.meta.setVisibility(View.VISIBLE);
+                h.meta.setText(leaseLine(d.leaseRemainingSec)
+                        + (total > 0 ? "    ↕ " + Formatters.bytes(total) : ""));
+            } else if (total > 0) {
+                h.meta.setVisibility(View.VISIBLE);
+                h.meta.setText("↕ " + Formatters.bytes(total));
+            } else {
+                h.meta.setVisibility(View.GONE);
+            }
+            h.apps.setVisibility(View.GONE);
+            bindWifi(h, d);
+            h.itemView.setOnClickListener(v -> showDetail(d));
+            h.itemView.setOnLongClickListener(v -> {
+                renameDevice(d.macAddress, d.getPrimaryTitle());
+                return true;
+            });
+        }
 
-            // 有线设备整行隐藏,不显示空信号格
-            boolean wifi = d.ssid != null && !d.ssid.isEmpty();
+        private void bindWifi(Holder h, @Nullable ConnectedDevice d) {
+            boolean wifi = d != null && d.ssid != null && !d.ssid.isEmpty();
             h.wifiRow.setVisibility(wifi ? View.VISIBLE : View.GONE);
             if (wifi) {
                 h.ssid.setText(d.ssid);
@@ -491,32 +755,32 @@ public class DevicesFragment extends Fragment {
                 h.signalBars.setVisibility(bars >= 0 ? View.VISIBLE : View.GONE);
                 h.signalBars.setBars(bars);
             }
-
-            h.itemView.setOnClickListener(v -> showDetail(d));
+            h.localBadge.setVisibility(d != null && d.isLocal ? View.VISIBLE : View.GONE);
         }
 
         @Override
         public int getItemCount() {
-            return devices.size();
+            return rows.size();
         }
 
         class Holder extends RecyclerView.ViewHolder {
-            final android.widget.ImageView icon;
-            final TextView title, ip, mac, lease, traffic, ssid, localBadge, blockedBadge;
+            final TextView avatar, title, badge, blockedBadge, ip, rates, meta, ssid, localBadge;
+            final LinearLayout apps;
             final View wifiRow;
             final SignalBarsView signalBars;
 
             Holder(@NonNull View v) {
                 super(v);
-                icon = v.findViewById(R.id.device_icon);
-                title = v.findViewById(R.id.device_title);
-                ip = v.findViewById(R.id.device_ip);
-                mac = v.findViewById(R.id.device_mac);
-                lease = v.findViewById(R.id.device_lease);
-                traffic = v.findViewById(R.id.device_traffic);
+                avatar = v.findViewById(R.id.term_avatar);
+                title = v.findViewById(R.id.term_title);
+                badge = v.findViewById(R.id.term_badge);
+                blockedBadge = v.findViewById(R.id.term_blocked_badge);
+                ip = v.findViewById(R.id.term_ip);
+                rates = v.findViewById(R.id.term_rates);
+                meta = v.findViewById(R.id.term_meta);
+                apps = v.findViewById(R.id.term_apps);
                 ssid = v.findViewById(R.id.device_ssid);
                 localBadge = v.findViewById(R.id.device_local_badge);
-                blockedBadge = v.findViewById(R.id.device_blocked_badge);
                 wifiRow = v.findViewById(R.id.wifi_row);
                 signalBars = v.findViewById(R.id.signal_bars);
             }

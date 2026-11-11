@@ -63,31 +63,31 @@ public class ServiceApiParsersTest {
 
     @Test
     public void eqosParsesGlobalAndSortsDevicesNumerically() {
+        // 固件装的是 eqosplus:全局段 type=eqosplus,设备段目标键 mac、启用键 enable
         EqosApi.EqosSettings settings = EqosApi.parse(json("{\"values\":{"
-                + "\"config\":{\".type\":\"eqos\",\"enabled\":\"1\","
-                + "  \"download\":\"300\",\"upload\":\"30\"},"
-                + "\"cfg02\":{\".type\":\"device\",\"ip\":\"192.168.1.10\","
+                + "\"config\":{\".type\":\"eqosplus\",\"enabled\":\"1\","
+                + "  \"download\":\"300\",\"upload\":\"30\",\"ifname\":\"1\"},"
+                + "\"cfg02\":{\".type\":\"device\",\"enable\":\"1\",\"mac\":\"192.168.1.10\","
                 + "  \"download\":\"20\",\"upload\":\"5\",\"comment\":\"TV\"},"
-                + "\"cfg01\":{\".type\":\"device\",\"ip\":\"192.168.1.9\","
+                + "\"cfg01\":{\".type\":\"device\",\"enable\":\"1\",\"mac\":\"192.168.1.9\","
                 + "  \"download\":\"5\",\"upload\":\"2\"},"
                 + "\"cfg03\":{\".type\":\"device\",\"download\":\"1\",\"upload\":\"1\"}}}"));
 
         assertTrue(settings.global.enabled);
-        assertEquals(300, settings.global.download);
-        // 没有 ip 的坏数据段被跳过
+        assertEquals("300", settings.global.download);
+        // 没有目标(mac)的坏数据段被跳过
         assertEquals(2, settings.devices.size());
         // .9 要排在 .10 前面
-        assertEquals("192.168.1.9", settings.devices.get(0).ip);
-        assertEquals("192.168.1.10", settings.devices.get(1).ip);
+        assertEquals("192.168.1.9", settings.devices.get(0).target);
+        assertEquals("192.168.1.10", settings.devices.get(1).target);
         assertEquals("TV", settings.devices.get(1).displayName());
-        // 没写 enabled 的条目默认启用
         assertTrue(settings.devices.get(0).enabled);
     }
 
     @Test
-    public void eqosDeviceDisplayNameFallsBackToIp() {
+    public void eqosDeviceDisplayNameFallsBackToTarget() {
         EqosDevice device = new EqosDevice();
-        device.ip = "10.0.0.5";
+        device.target = "10.0.0.5";
         assertEquals("10.0.0.5", device.displayName());
         device.comment = "  ";
         assertEquals("10.0.0.5", device.displayName());

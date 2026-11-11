@@ -149,7 +149,7 @@ public final class ServiceCatalog {
                     R.string.svc_need_openclash),
             new Descriptor(ServiceId.DEVICE_RATE_LIMIT, R.string.svc_rate_limit,
                     R.string.svc_rate_limit_sub, R.drawable.svc_ratelimit, R.color.ios_orange,
-                    DeviceRateLimitActivity.class, PluginChecker.Plugin.EQOS, "eqos",
+                    DeviceRateLimitActivity.class, PluginChecker.Plugin.EQOSPLUS, "eqosplus",
                     R.string.svc_need_eqos),
             new Descriptor(ServiceId.VNSTAT, R.string.svc_vnstat,
                     R.string.svc_vnstat_sub, R.drawable.svc_vnstat, R.color.ios_teal,

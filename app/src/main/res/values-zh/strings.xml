@@ -4,7 +4,7 @@
     <!-- 底部导航 -->
     <string name="tab_dashboard">总览</string>
     <string name="tab_realtime">实时</string>
-    <string name="tab_devices">设备</string>
+    <string name="tab_devices">终端</string>
     <string name="tab_services">服务</string>
     <string name="tab_settings">设置</string>
 
@@ -384,29 +384,106 @@
     <string name="eqos_global_footer">总带宽用于计算队列，请按实际宽带套餐填写。关闭总开关后所有限速立即失效。</string>
     <string name="eqos_devices">已限速设备</string>
     <string name="eqos_empty">还没有限速设备，点右上角添加</string>
-    <string name="eqos_unit_hint">1 Mbit/s = 125 KB/s。例如限速 10 Mbit/s，下载约 1.25 MB/s。</string>
-    <string name="eqos_devices_footer">长按可取消限速。上下行都必须设定，最小 1 Mbit/s。\n1 Mbit/s = 125 KB/s。例如限速 10 Mbit/s，下载约 1.25 MB/s。</string>
+    <string name="eqos_unit_hint">限速单位 MB/s，可填小数（如 0.5）。1 MB/s ≈ 8 Mbit/s。</string>
+    <string name="eqos_devices_footer">长按可取消限速。某个方向填 0 表示该方向不限，但上下行不能同时为 0。\n限速单位 MB/s，可填小数。1 MB/s ≈ 8 Mbit/s。</string>
     <string name="eqos_add_device">添加限速设备</string>
     <string name="eqos_edit_device">修改限速</string>
     <string name="eqos_pick_connected">从已连接设备选择</string>
     <string name="eqos_enter_ip">手动输入 IP</string>
     <string name="eqos_pick_title">选择设备</string>
     <string name="eqos_no_candidates">没有可添加的设备</string>
-    <string name="eqos_device_hint">限速值单位 Mbit/s，上行和下行都必须填写，最小 1。</string>
-    <string name="eqos_bandwidth_hint">填宽带套餐的实际带宽，单位 Mbit/s，最小 1。填得不准会让所有限速都偏。</string>
+    <string name="eqos_device_hint">限速值单位 MB/s，可填小数。某个方向填 0 表示不限，上下行不能同时为 0。</string>
+    <string name="eqos_bandwidth_hint">填宽带套餐的实际带宽，单位 MB/s。填得不准会让所有限速都偏。</string>
     <string name="eqos_comment_hint">备注（可留空）</string>
     <string name="eqos_ip_hint">IP 地址</string>
-    <string name="eqos_down_hint">下行上限 Mbit/s</string>
-    <string name="eqos_up_hint">上行上限 Mbit/s</string>
+    <string name="eqos_target_hint">IP / MAC / IP段，如 10.0.1.7 或 10.0.1.10-10.0.1.20</string>
+    <string name="eqos_down_hint">下行上限 MB/s</string>
+    <string name="eqos_up_hint">上行上限 MB/s</string>
     <string name="eqos_invalid_ip">请输入有效的 IPv4 地址</string>
-    <string name="eqos_both_required">上行和下行都要填写，且不能小于 1</string>
-    <string name="eqos_positive_required">请输入大于 0 的整数</string>
+    <string name="eqos_invalid_target">请输入有效的 IP、MAC、IP 段或 IP/掩码</string>
+    <string name="eqos_invalid_time">时间格式须为 HH:MM，如 08:00</string>
+    <string name="eqos_week_label">生效星期</string>
+    <string name="eqos_time_label">生效时段</string>
+    <string name="eqos_both_required">上行和下行都要填写；一个方向可为 0，但不能同时为 0</string>
+    <string name="eqos_positive_required">请输入大于 0 的数（可带小数）</string>
     <string name="eqos_disabled_suffix">%1$s（已停用）</string>
     <string name="eqos_remove_title">取消限速</string>
     <string name="eqos_remove_msg">不再限制 %1$s 的速度？</string>
-    <string name="eqos_not_configured">未找到 eqos 配置。请先在「软件包管理」里安装 luci-app-eqos。</string>
+    <string name="eqos_not_configured">未找到 eqosplus 配置。请先在「软件包管理」里安装 luci-app-eqosplus。</string>
     <string name="eqos_load_failed">加载失败</string>
     <string name="eqos_action_failed">操作失败</string>
+    <string-array name="eqos_week_labels">
+        <item>每天</item>
+        <item>工作日</item>
+        <item>周末</item>
+        <item>周一</item>
+        <item>周二</item>
+        <item>周三</item>
+        <item>周四</item>
+        <item>周五</item>
+        <item>周六</item>
+        <item>周日</item>
+    </string-array>
+
+    <!-- 终端(OpenAppFilter 用户) -->
+    <string name="term_summary">共 %1$d 台终端 · 在线 %2$d · 活跃 %3$d</string>
+    <string name="term_active">活跃</string>
+    <string name="term_online">在线</string>
+    <string name="term_offline">离线</string>
+    <string name="term_blocked_badge">已拉黑</string>
+    <string name="term_loading">加载中…</string>
+    <string name="term_load_failed">加载失败</string>
+    <string name="term_no_data">暂无数据</string>
+    <string name="term_tab_basic">基本信息</string>
+    <string name="term_tab_rules">管控规则</string>
+    <string name="term_tab_appstat">App统计</string>
+    <string name="term_tab_traffic">今日流量</string>
+    <string name="term_tab_apps">常用App</string>
+    <string name="term_tab_records">应用记录</string>
+    <string name="term_section_basic">基本信息</string>
+    <string name="term_section_today">今日数据</string>
+    <string name="term_section_common_apps">今日常用应用</string>
+    <string name="term_access">接入方式</string>
+    <string name="term_wireless">无线</string>
+    <string name="term_wired">有线</string>
+    <string name="term_current_app">当前应用</string>
+    <string name="term_current_url">当前地址</string>
+    <string name="term_today_up">今日上行</string>
+    <string name="term_today_down">今日下行</string>
+    <string name="term_today_active">今日活跃时长</string>
+    <string name="term_module_appfilter">应用管控</string>
+    <string name="term_module_macfilter">访问控制</string>
+    <string name="term_module_blacklist">黑名单</string>
+    <string name="term_whitelist_af">该设备在应用过滤白名单里，应用管控规则对它不生效。</string>
+    <string name="term_whitelist_mf">该设备在访问控制白名单里，访问规则对它不生效。</string>
+    <string name="term_no_rules">没有命中该设备的管控规则</string>
+    <string name="term_everyday">每天</string>
+    <string name="term_duration_limit">每日上限 %1$d 分钟</string>
+    <string name="term_flow_limit">每日上限 %1$s MB</string>
+    <string name="term_in_blacklist">已加入上网黑名单</string>
+    <string name="term_today_matched">当前处于管控时段内</string>
+    <string name="term_today_unmatched">当前不在管控时段内</string>
+    <string name="term_today_unlimited">今日不限</string>
+    <string name="term_today_used_duration">今日已用 %1$d / 上限 %2$d 分钟（%3$d%%）</string>
+    <string name="term_today_used_flow">今日已用 %1$s / 上限 %2$s MB（%3$d%%）</string>
+    <string name="term_appstat_total">累计时长：%1$s</string>
+    <string name="term_hourly_total">今日合计 ↑ %1$s · ↓ %2$s</string>
+    <string name="term_load_more">加载更多</string>
+    <string name="term_block">拉黑</string>
+    <string name="term_unblock">解除拉黑</string>
+    <string name="term_block_msg">拉黑 %1$s？它将无法上网，直到解除拉黑。</string>
+    <string name="term_unblock_msg">解除对 %1$s 的拉黑？</string>
+    <string name="term_block_ok">已拉黑</string>
+    <string name="term_unblock_ok">已解除拉黑</string>
+    <string-array name="term_weekdays">
+        <item>周日</item>
+        <item>周一</item>
+        <item>周二</item>
+        <item>周三</item>
+        <item>周四</item>
+        <item>周五</item>
+        <item>周六</item>
+    </string-array>
 
     <!-- 防火墙管理 -->
     <string name="fw_tab_status">状态</string>
@@ -439,7 +516,7 @@
     <string name="svc_plugin_missing">插件未安装</string>
     <string name="svc_go_install">去安装</string>
     <string name="svc_need_openclash">网络代理功能需要安装 OpenClash 插件</string>
-    <string name="svc_need_eqos">设备限速需要安装 luci-app-eqos 插件，它按 IP 限制单台设备的上下行带宽</string>
+    <string name="svc_need_eqos">设备限速需要安装 luci-app-eqosplus 插件，它按 IP 或 MAC 限制单台设备的上下行带宽</string>
     <string name="svc_need_samba">NAS 共享服务需要安装 samba4 插件</string>
     <string name="svc_need_vsftpd">FTP 服务需要安装 vsftpd 插件</string>
 

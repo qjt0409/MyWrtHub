@@ -10,16 +10,24 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 设备限速(luci-app-eqos)API,对应 iOS OpenWrtAPI 的「设备限速」分区。
+ * 设备限速(luci-app-eqosplus)API —— 固件里装的是 eqosplus,不是老 eqos,
+ * 两者的 uci 配置名与字段都不同(以 eqosplus 1.3.0 源码为准):
  *
- * 读写都走 uci —— luci-app-eqos 的 ACL 只授权了 uci scope,不含执行 init 脚本。
- * 生效靠 uci.apply 触发 /sbin/reload_config,procd 的 reload trigger 重载 eqos。
+ *  - 配置名 eqosplus;全局段 type=eqosplus{enabled, download, upload, ifname},
+ *    download/upload 单位 MB/s(可带小数);
+ *  - 设备段 type=device{comment, enable, mac, download, upload,
+ *    timestart, timeend, week};mac 字段可填 IP / MAC / IP 段;
+ *    启用键是 enable 不是 enabled。
+ *
+ * 读写都走 uci —— luci-app-eqosplus 的 ACL 只授权了 eqosplus 的 uci scope。
+ * 生效靠 uci.apply 触发 /sbin/reload_config,eqosplus 注册了 procd
+ * reload trigger(init.d 里 procd_add_reload_trigger 'eqosplus')。
  * 注意 rpcd 的 ubus 方法白名单里只有 apply 没有 commit,直接 commit 会 -32002。
  */
 public final class EqosApi {
 
-    public static final String CONFIG = "eqos";
-    private static final String INIT = "eqos";
+    public static final String CONFIG = "eqosplus";
+    private static final String INIT = "eqosplus";
 
     /** 全局设置 + 设备列表 */
     public static final class EqosSettings {
@@ -57,27 +65,31 @@ public final class EqosApi {
             if (!el.isJsonObject()) continue;
             JsonObject sec = el.getAsJsonObject();
             String type = str(sec, ".type", "");
-            if ("eqos".equals(type)) {
+            if ("eqosplus".equals(type)) {
                 out.global = new EqosGlobal(
                         uciBool(sec, "enabled", false),
-                        uciInt(sec, "download", EqosGlobal.DEFAULT_DOWNLOAD),
-                        uciInt(sec, "upload", EqosGlobal.DEFAULT_UPLOAD));
+                        str(sec, "download", EqosGlobal.DEFAULT_DOWNLOAD),
+                        str(sec, "upload", EqosGlobal.DEFAULT_UPLOAD),
+                        str(sec, "ifname", EqosGlobal.DEFAULT_IFNAME));
+                out.global.section = key;
             } else if ("device".equals(type)) {
-                String ip = str(sec, "ip", "");
-                // 没有 ip 的段是坏数据,跳过(限速规则离了 IP 无意义)
-                if (ip.isEmpty()) continue;
+                String target = str(sec, "mac", "");
+                // 没有目标的段是坏数据,跳过(限速规则离了目标无意义)
+                if (target.isEmpty()) continue;
                 EqosDevice d = new EqosDevice();
                 d.section = key;
-                d.enabled = uciBool(sec, "enabled", true);
-                d.ip = ip;
-                d.download = uciInt(sec, "download", 0);
-                d.upload = uciInt(sec, "upload", 0);
+                d.enabled = uciBool(sec, "enable", false);
+                d.target = target;
+                d.download = str(sec, "download", "");
+                d.upload = str(sec, "upload", "");
                 d.comment = str(sec, "comment", "");
+                d.timeStart = str(sec, "timestart", "00:00");
+                d.timeEnd = str(sec, "timeend", "23:55");
+                d.week = str(sec, "week", "0");
                 out.devices.add(d);
             }
         }
-        // IP 按段比较,避免 .10 排在 .9 前面
-        Collections.sort(out.devices, (a, b) -> EqosDevice.compareIp(a.ip, b.ip));
+        Collections.sort(out.devices, (a, b) -> EqosDevice.compareTarget(a.target, b.target));
         return out;
     }
 
@@ -95,22 +107,13 @@ public final class EqosApi {
                 || s.equals("yes") || s.equals("enabled");
     }
 
-    static int uciInt(JsonObject o, String key, int def) {
-        JsonElement e = o.get(key);
-        if (e == null || e.isJsonNull() || !e.isJsonPrimitive()) return def;
-        try {
-            return Integer.parseInt(e.getAsString().trim());
-        } catch (NumberFormatException ex) {
-            return def;
-        }
-    }
-
     public static void saveGlobal(EqosGlobal global, ApiCallback<Boolean> cb) {
         JsonObject values = new JsonObject();
         values.addProperty("enabled", global.enabled ? "1" : "0");
-        values.addProperty("download", String.valueOf(global.download));
-        values.addProperty("upload", String.valueOf(global.upload));
-        api().uciSetTyped(CONFIG, "config", "eqos", values, new ApiCallback<JsonObject>() {
+        values.addProperty("download", global.download);
+        values.addProperty("upload", global.upload);
+        values.addProperty("ifname", global.ifname);
+        ApiCallback<JsonObject> next = new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
                 apply(global.enabled, cb);
@@ -120,7 +123,13 @@ public final class EqosApi {
             public void onFailure(ApiError error) {
                 cb.onFailure(error);
             }
-        });
+        };
+        // 读到过真实段名就按段名写回(匿名段最稳);没有才按类型新建
+        if (global.section != null && !global.section.isEmpty()) {
+            api().uciSet(CONFIG, global.section, values, next);
+        } else {
+            api().uciSetTyped(CONFIG, "config", "eqosplus", values, next);
+        }
     }
 
     /** 新增限速设备,成功后回传 uci 生成的段名 */
@@ -186,13 +195,18 @@ public final class EqosApi {
 
     private static JsonObject deviceValues(EqosDevice d) {
         JsonObject v = new JsonObject();
-        // 每台设备自己也有启用开关,必须显式写回,
+        // 每条规则自己也有启用开关(键名是 enable),必须显式写回,
         // 否则会把用户在网页端停用的条目悄悄改成启用
-        v.addProperty("enabled", d.enabled ? "1" : "0");
-        v.addProperty("ip", d.ip);
-        v.addProperty("download", String.valueOf(d.download));
-        v.addProperty("upload", String.valueOf(d.upload));
+        v.addProperty("enable", d.enabled ? "1" : "0");
+        v.addProperty("mac", d.target);
+        v.addProperty("download", d.download);
+        v.addProperty("upload", d.upload);
         v.addProperty("comment", d.comment == null ? "" : d.comment);
+        v.addProperty("timestart", d.timeStart == null || d.timeStart.isEmpty()
+                ? "00:00" : d.timeStart);
+        v.addProperty("timeend", d.timeEnd == null || d.timeEnd.isEmpty()
+                ? "23:55" : d.timeEnd);
+        v.addProperty("week", d.week == null || d.week.isEmpty() ? "0" : d.week);
         return v;
     }
 
