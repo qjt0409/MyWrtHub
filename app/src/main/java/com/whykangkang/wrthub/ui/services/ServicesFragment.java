@@ -108,14 +108,12 @@ public class ServicesFragment extends Fragment {
                 ServiceId.PASSWALL,
                 ServiceId.PASSWALL2,
                 ServiceId.DEVICE_RATE_LIMIT,
-                ServiceId.VNSTAT,
                 ServiceId.WANSTATS,
                 ServiceId.OAF,
                 ServiceId.OAF_RECORDS,
                 ServiceId.SPEEDTEST)));
         groups.add(new Group(R.string.svc_group_file, ServiceCatalog.group(
                 ServiceId.SAMBA,
-                ServiceId.FILEBROWSER,
                 ServiceId.FTP)));
         groups.add(new Group(R.string.svc_group_system, ServiceCatalog.group(
                 ServiceId.TERMINAL,
