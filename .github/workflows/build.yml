@@ -1,9 +1,14 @@
 name: Build APK
 
-# 推送到 main 或手动触发时,云端打包 debug APK 并存为构建产物(Artifacts)。
+# 推送到 main 或手动触发时,云端打包 debug APK:一式两份 —— 构建产物
+# (Artifacts)与正式发布(Releases,tag 为 v<versionName>,附 APK 文件)。
 # 本仓库不含 gradle-wrapper.jar(纯文本源码管理),改用 setup-gradle 提供
 # 与 gradle/wrapper/gradle-wrapper.properties 相同的 Gradle 8.11.1。
 # 本地开发可用 Android Studio 打开,或先 `gradle wrapper` 生成 wrapper 再 ./gradlew。
+#
+# 注意:本文件是 .github/workflows/build.yml 的副本(因推送权限限制,
+# workflows 文件只能在网页端维护)。改工作流时先改这里,再把内容整段
+# 复制去替换 .github/workflows/build.yml。
 
 on:
   push:
@@ -13,6 +18,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -36,3 +43,15 @@ jobs:
           name: MyWrtHub-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Resolve version
+        id: ver
+        run: echo "name=$(grep -oP 'versionName "\K[^"]+' app/build.gradle)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: MyWrtHub v${{ steps.ver.outputs.name }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
