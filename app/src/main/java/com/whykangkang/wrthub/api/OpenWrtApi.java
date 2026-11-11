@@ -154,7 +154,11 @@ public class OpenWrtApi {
             if (now - lastSessionResetMs < 2000) return;
             lastSessionResetMs = now;
         }
-        client.connectionPool().evictAll();
+        // 关连接是网络 I/O:TLS 连接关闭时 Conscrypt 要写 close_notify,
+        // 在主线程做会被 StrictMode 以 NetworkOnMainThreadException 打死 ——
+        // 这正是「切到 HTTPS 设备时白屏闪退」的真因(明文 HTTP 的 socket
+        // 关闭不写应用层数据,所以只在 HTTPS 下炸)。必须丢到后台线程。
+        executor.execute(() -> client.connectionPool().evictAll());
     }
 
     /** token 是否仍在有效期内(5 分钟,提前 30s 预判) */

@@ -1,10 +1,17 @@
 name: Build APK
 
-# 推送到 main 或手动触发时,云端打包 debug APK:一式两份 —— 构建产物
-# (Artifacts)与正式发布(Releases,tag 为 v<versionName>,附 APK 文件)。
+# 推送到 main 或手动触发时,云端打包:单元测试 → assembleRelease(正式签名)
+# → 一式两份发布:构建产物(Artifacts)与正式发布(Releases,tag 为
+# v<versionName>,附 MyWrtHub-v<versionName>.apk)。
+#
+# 正式签名:仓库 Secrets 需先配好两个值(缺任一构建直接失败,不会误发
+# 未签名/临时签名包):
+#   RELEASE_KEYSTORE_BASE64 —— mywrthub-release.keystore 的 base64 全文
+#   RELEASE_STORE_PASSWORD  —— keystore 密码
+# 签名配置在 app/build.gradle 的 signingConfigs.release,读环境变量。
+#
 # 本仓库不含 gradle-wrapper.jar(纯文本源码管理),改用 setup-gradle 提供
 # 与 gradle/wrapper/gradle-wrapper.properties 相同的 Gradle 8.11.1。
-# 本地开发可用 Android Studio 打开,或先 `gradle wrapper` 生成 wrapper 再 ./gradlew。
 #
 # 注意:本文件是 .github/workflows/build.yml 的副本(因推送权限限制,
 # workflows 文件只能在网页端维护)。改工作流时先改这里,再把内容整段
@@ -20,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,24 +44,36 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Unit tests + assemble debug APK
-        run: gradle testDebugUnitTest assembleDebug --stacktrace
+      - name: Decode release keystore
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$RELEASE_STORE_PASSWORD" ]; then
+            echo "::error::缺少签名 Secrets:请在仓库 Settings → Secrets and variables → Actions 里添加 RELEASE_KEYSTORE_BASE64 与 RELEASE_STORE_PASSWORD"
+            exit 1
+          fi
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/mywrthub-release.keystore"
+          echo "RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/mywrthub-release.keystore" >> "$GITHUB_ENV"
+
+      - name: Unit tests + assemble release APK
+        run: gradle testDebugUnitTest assembleRelease --stacktrace
+
+      - name: Resolve version + rename APK
+        id: ver
+        run: |
+          V=$(grep -oP 'versionName "\K[^"]+' app/build.gradle)
+          echo "name=$V" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk "MyWrtHub-v$V.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MyWrtHub-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MyWrtHub-release-apk
+          path: MyWrtHub-v${{ steps.ver.outputs.name }}.apk
           if-no-files-found: error
-
-      - name: Resolve version
-        id: ver
-        run: echo "name=$(grep -oP 'versionName "\K[^"]+' app/build.gradle)" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.name }}
           name: MyWrtHub v${{ steps.ver.outputs.name }}
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: MyWrtHub-v${{ steps.ver.outputs.name }}.apk
           fail_on_unmatched_files: true
