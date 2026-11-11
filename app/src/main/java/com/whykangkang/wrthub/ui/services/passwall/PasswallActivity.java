@@ -63,6 +63,9 @@ public class PasswallActivity extends AppCompatActivity {
     private boolean rendering;
     /** 网络检测进行中(进页面自动跑一次,防重入) */
     private boolean checkRunning;
+    /** 节点分组的展开状态(组名 → 展开);默认全折叠,只展开当前节点所在组 */
+    private final java.util.Set<String> expandedGroups = new java.util.HashSet<>();
+    private boolean groupsInitialized;
 
     /** 配置名(passwall);PassWall2 子类覆写为 passwall2 */
     protected String pwConfig() {
@@ -206,6 +209,7 @@ public class PasswallActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 swipeRefresh.setRefreshing(false);
                 settings = result;
+                groupsInitialized = false;
                 render();
             }
 
@@ -398,7 +402,8 @@ public class PasswallActivity extends AppCompatActivity {
         btnRestart.setEnabled(settings.enabled && !busy);
     }
 
-    /** 节点列表:按 group 分组(保持配置里的先后顺序),组头带计数 */
+    /** 节点列表:按 group 分组(保持配置里的先后顺序),组头带计数、可折叠;
+     *  默认全折叠,只展开当前节点所在组 */
     private void renderNodes() {
         nodeRows.removeAllViews();
         if (settings.nodes.isEmpty()) {
@@ -411,18 +416,48 @@ public class PasswallActivity extends AppCompatActivity {
             String group = node.group == null ? "" : node.group.trim();
             groups.computeIfAbsent(group, k -> new java.util.ArrayList<>()).add(node);
         }
+        if (!groupsInitialized) {
+            expandedGroups.clear();
+            for (Map.Entry<String, java.util.List<PasswallNode>> e : groups.entrySet()) {
+                for (PasswallNode n : e.getValue()) {
+                    if (n.section.equals(settings.nodeId)) {
+                        expandedGroups.add(e.getKey());
+                        break;
+                    }
+                }
+            }
+            groupsInitialized = true;
+        }
         boolean multiGroup = groups.size() > 1;
         for (Map.Entry<String, java.util.List<PasswallNode>> e : groups.entrySet()) {
-            if (multiGroup || !e.getKey().isEmpty()) {
-                TextView header = (TextView) getLayoutInflater().inflate(
+            final String groupKey = e.getKey();
+            boolean expanded = expandedGroups.contains(groupKey);
+            if (multiGroup || !groupKey.isEmpty()) {
+                View header = getLayoutInflater().inflate(
                         R.layout.item_passwall_group, nodeRows, false);
-                String label = e.getKey().isEmpty()
-                        ? getString(R.string.pw_group_default) : e.getKey();
-                header.setText(getString(R.string.pw_group_count, label, e.getValue().size()));
+                TextView label = header.findViewById(R.id.pwg_label);
+                TextView arrow = header.findViewById(R.id.pwg_arrow);
+                String name = groupKey.isEmpty()
+                        ? getString(R.string.pw_group_default) : groupKey;
+                label.setText(getString(R.string.pw_group_count, name, e.getValue().size()));
+                arrow.setText(expanded ? "▾" : "▸");
+                header.setOnClickListener(v -> {
+                    if (expandedGroups.contains(groupKey)) {
+                        expandedGroups.remove(groupKey);
+                    } else {
+                        expandedGroups.add(groupKey);
+                    }
+                    renderNodes();
+                });
                 nodeRows.addView(header);
+            } else {
+                // 只有一个未分组的组:不显示组头,永远展开
+                expanded = true;
             }
-            for (PasswallNode node : e.getValue()) {
-                nodeRows.addView(buildNodeRow(node));
+            if (expanded) {
+                for (PasswallNode node : e.getValue()) {
+                    nodeRows.addView(buildNodeRow(node));
+                }
             }
         }
     }

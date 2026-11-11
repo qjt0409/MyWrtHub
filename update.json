@@ -1,1 +1,1 @@
-{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.6:修复 PassWall 监测与订阅更新在部分固件上被拒的问题(改走 LuCI 网页版同款接口);运行状态新增 TCP/UDP/DNS/HAPROXY 组件监测;国内 IP 改取 WAN 口地址,国外 IP 经路由器 Socks 出口实测。含 1.5 的状态页布局与总览今日流量。", "versionCode": 7, "versionName": "1.6"}
+{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.7:服务页「网络服务」补上 PassWall / PassWall2 入口(此前只在目录里注册、没进列表);PassWall 节点列表分组可折叠,默认全折叠、只展开当前节点所在组。含 1.6 的网页接口修复与组件状态监测。", "versionCode": 8, "versionName": "1.7"}

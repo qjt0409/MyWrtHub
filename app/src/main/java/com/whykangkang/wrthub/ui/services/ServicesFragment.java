@@ -105,6 +105,8 @@ public class ServicesFragment extends Fragment {
                 ServiceId.NETWORK_INTERFACES,
                 ServiceId.NETWORK_DIAGNOSTICS,
                 ServiceId.PROXY,
+                ServiceId.PASSWALL,
+                ServiceId.PASSWALL2,
                 ServiceId.DEVICE_RATE_LIMIT,
                 ServiceId.VNSTAT,
                 ServiceId.WANSTATS,
