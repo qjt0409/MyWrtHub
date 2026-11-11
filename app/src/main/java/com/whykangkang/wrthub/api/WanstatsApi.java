@@ -121,6 +121,15 @@ public final class WanstatsApi {
         }
     }
 
+    /** 在 daily 里按日期标签找一行(总览「今日下行/上行」用);没有返回 null */
+    public static Entry findDaily(History h, String dateLabel) {
+        if (h == null || dateLabel == null) return null;
+        for (Entry e : h.daily) {
+            if (dateLabel.equals(e.label)) return e;
+        }
+        return null;
+    }
+
     private static String str(JsonObject o, String key) {
         return o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : "";
     }

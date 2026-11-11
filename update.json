@@ -1,1 +1,1 @@
-{"downloadUrl":"https://github.com/qjt0409/MyWrtHub/releases","forceUpdate":false,"updateMessage":"1.4:PassWall/PassWall2 页改版(仿 OpenClash 页与 LuCI:快捷模式、TCP/UDP、大陆/GFW 列表、DNS 分流与远程 DNS);总览新增总下行/总上行卡(wanstats 累计,副行本月)。含 1.3 的 HTTPS 闪退修复与正式签名。","versionCode":5,"versionName":"1.4"}
+{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.5:PassWall 页按 LuCI 状态页布局重排(运行状态+主开关、节点选择、百度/谷歌网络监测、国内/国外 IP、订阅管理、节点按分组显示);总览下行/上行卡改为今日数据(副行仍是本月)。含 1.4 的快捷模式/代理/DNS 与 1.3 的 HTTPS 闪退修复。", "versionCode": 6, "versionName": "1.5"}

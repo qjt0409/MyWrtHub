@@ -1,6 +1,7 @@
 package com.whykangkang.wrthub.api;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -55,5 +56,17 @@ public class WanstatsApiTest {
 
         WanstatsApi.History nullSafe = WanstatsApi.parseHistory(null);
         assertTrue(nullSafe.daily.isEmpty());
+    }
+
+    @Test
+    public void findDaily_matchesByDateLabel() {
+        WanstatsApi.History h = WanstatsApi.parseHistory(JsonParser.parseString(
+                "{\"daily\":[{\"date\":\"2026-11-12\",\"rx\":1,\"tx\":2},"
+                        + "{\"date\":\"2026-11-11\",\"rx\":3,\"tx\":4}]}")
+                .getAsJsonObject());
+        assertEquals(3L, WanstatsApi.findDaily(h, "2026-11-11").rx);
+        assertEquals(2L, WanstatsApi.findDaily(h, "2026-11-12").tx);
+        assertNull(WanstatsApi.findDaily(h, "2026-11-13"));
+        assertNull(WanstatsApi.findDaily(null, "2026-11-11"));
     }
 }

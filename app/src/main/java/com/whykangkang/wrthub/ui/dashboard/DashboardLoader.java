@@ -136,21 +136,19 @@ public class DashboardLoader {
             }
         });
 
-        // WAN 总量卡的数据:自家 wanstats 的月度表(累计求和 + 本月)
+        // WAN 下行/上行卡的数据:自家 wanstats(今日一行 + 本月一行)
         WanstatsApi.loadHistory(new ApiCallback<WanstatsApi.History>() {
             @Override
             public void onSuccess(WanstatsApi.History result) {
                 if (!result.monthly.isEmpty()) {
-                    long totalRx = 0, totalTx = 0;
-                    for (WanstatsApi.Entry e : result.monthly) {
-                        totalRx += e.rx;
-                        totalTx += e.tx;
-                    }
-                    data.wanTotalRx = totalRx;
-                    data.wanTotalTx = totalTx;
                     // monthly 最近在前,第一个就是本月
                     data.wanMonthRx = result.monthly.get(0).rx;
                     data.wanMonthTx = result.monthly.get(0).tx;
+                    String today = new java.text.SimpleDateFormat("yyyy-MM-dd",
+                            java.util.Locale.US).format(new java.util.Date());
+                    WanstatsApi.Entry day = WanstatsApi.findDaily(result, today);
+                    data.wanTodayRx = day != null ? day.rx : 0L;
+                    data.wanTodayTx = day != null ? day.tx : 0L;
                 }
                 done.run();
             }

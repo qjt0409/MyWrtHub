@@ -1,6 +1,5 @@
 package com.whykangkang.wrthub.ui.services.passwall;
 
-import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -12,6 +11,7 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.widget.NestedScrollView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.google.android.material.button.MaterialButton;
@@ -28,20 +28,25 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * PassWall / PassWall2 全局页:仿 LuCI 全局页 + App 内 OpenClash 页排版。
- *
- * 状态卡(大状态块、快捷模式、启停/重启/刷新)、节点卡(点选切换)、
- * 代理设置卡(TCP/UDP 模式、大陆列表、GFW/本机/局域网开关)、
- * DNS 卡(分流、过滤模式、远程 DNS)。数据与 LuCI 同源(uci),
- * 改完 apply + 重启服务生效。配置里没有的键整行隐藏 —— PassWall2
- * 是分流节点模型,只有本机/局域网/远程 DNS 三项,天然降级。
+ * PassWall / PassWall2 页:按 LuCI 状态页布局 ——
+ * 运行状态+主开关一行、节点选择、国内(百度)/国外(谷歌)网络监测、
+ * 国内/国外 IP、订阅管理(增删 + subscribe.lua 更新)、按 group 分组的
+ * 节点列表;其后是代理设置卡(含快捷模式)与 DNS 卡。
+ * 数据与 LuCI 同源(uci),改完 apply + 重启服务生效。
+ * 配置里没有的键整行隐藏 —— PassWall2 只有本机/局域网/远程 DNS 三项。
  */
 public class PasswallActivity extends AppCompatActivity {
 
     private TextView statusText, currentNodeLabel, emptyLabel, modeCustomLabel;
     private View statusDot;
     private View statusSpinner;
-    private MaterialButton btnToggle, btnRestart, btnRefresh;
+    private MaterialButton btnRestart, btnRefresh;
+    private SwitchMaterial mainSwitch;
+    private TextView pickName, pickMeta, checkCnValue, checkGValue, ipCnValue, ipGValue;
+    private LinearLayout subRows;
+    private TextView subEmpty;
+    private NestedScrollView scrollView;
+    private View nodesHeader;
     private MaterialButtonToggleGroup modeGroup, segTcp, segUdp, segChn;
     private SwitchMaterial swGfw, swLocalhost, swClient;
     private LinearLayout nodeRows;
@@ -54,6 +59,8 @@ public class PasswallActivity extends AppCompatActivity {
     private boolean busy;
     /** 程序回填控件值时别触发写回 */
     private boolean rendering;
+    /** 网络检测进行中(进页面自动跑一次,防重入) */
+    private boolean checkRunning;
 
     /** 配置名(passwall);PassWall2 子类覆写为 passwall2 */
     protected String pwConfig() {
@@ -74,7 +81,6 @@ public class PasswallActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_passwall);
         ((TextView) findViewById(R.id.pw_title)).setText(pwTitleRes());
-        ((TextView) findViewById(R.id.pw_card_name)).setText(pwTitleRes());
 
         statusText = findViewById(R.id.pw_status_text);
         statusDot = findViewById(R.id.pw_status_dot);
@@ -83,9 +89,19 @@ public class PasswallActivity extends AppCompatActivity {
         emptyLabel = findViewById(R.id.pw_empty);
         modeCustomLabel = findViewById(R.id.pw_mode_custom);
         nodeRows = findViewById(R.id.pw_node_rows);
-        btnToggle = findViewById(R.id.pw_btn_toggle);
+        mainSwitch = findViewById(R.id.pw_main_switch);
         btnRestart = findViewById(R.id.pw_btn_restart);
         btnRefresh = findViewById(R.id.pw_btn_refresh);
+        pickName = findViewById(R.id.pw_pick_name);
+        pickMeta = findViewById(R.id.pw_pick_meta);
+        checkCnValue = findViewById(R.id.pw_check_cn_value);
+        checkGValue = findViewById(R.id.pw_check_g_value);
+        ipCnValue = findViewById(R.id.pw_ip_cn_value);
+        ipGValue = findViewById(R.id.pw_ip_g_value);
+        subRows = findViewById(R.id.pw_sub_rows);
+        subEmpty = findViewById(R.id.pw_sub_empty);
+        scrollView = findViewById(R.id.pw_scroll);
+        nodesHeader = findViewById(R.id.pw_nodes_header);
         modeGroup = findViewById(R.id.pw_mode_group);
         segTcp = findViewById(R.id.pw_seg_tcp);
         segUdp = findViewById(R.id.pw_seg_udp);
@@ -99,14 +115,30 @@ public class PasswallActivity extends AppCompatActivity {
         swipeRefresh = findViewById(R.id.swipe_refresh);
         swipeRefresh.setOnRefreshListener(this::load);
 
-        btnToggle.setOnClickListener(v -> {
-            if (settings != null && !busy) toggleEnabled();
+        mainSwitch.setOnCheckedChangeListener((v, checked) -> {
+            if (rendering || busy || settings == null) return;
+            if (checked != settings.enabled) toggleEnabled();
         });
         btnRestart.setOnClickListener(v -> {
             if (!busy) restartService();
         });
         btnRefresh.setOnClickListener(v -> {
             if (!busy) load();
+        });
+        findViewById(R.id.pw_pick_card).setOnClickListener(v ->
+                scrollView.post(() -> scrollView.smoothScrollTo(0, nodesHeader.getTop())));
+        View.OnClickListener checkClick = v -> {
+            if (!busy && settings != null) runNetCheck();
+        };
+        findViewById(R.id.pw_check_cn_card).setOnClickListener(checkClick);
+        findViewById(R.id.pw_check_g_card).setOnClickListener(checkClick);
+        findViewById(R.id.pw_sub_add).setOnClickListener(v -> {
+            if (!busy) showAddSubscription();
+        });
+        findViewById(R.id.pw_sub_update_all).setOnClickListener(v -> {
+            if (!busy && settings != null && !settings.subscriptions.isEmpty()) {
+                updateAllSubscriptions(0);
+            }
         });
 
         modeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -206,6 +238,12 @@ public class PasswallActivity extends AppCompatActivity {
         PasswallNode current = settings.currentNode();
         currentNodeLabel.setText(current != null ? current.displayName()
                 : getString(R.string.pw_no_node_selected));
+        pickName.setText(current != null ? current.displayName()
+                : getString(R.string.pw_no_node_selected));
+        String pickMetaText = current != null ? current.subtitle() : "";
+        pickMeta.setText(pickMetaText);
+        pickMeta.setVisibility(pickMetaText.isEmpty() ? View.GONE : View.VISIBLE);
+        renderSubscriptions();
 
         // 快捷模式(PassWall 才有这组键)
         boolean hasMode = settings.tcpProxyMode != null;
@@ -265,6 +303,8 @@ public class PasswallActivity extends AppCompatActivity {
 
         renderNodes();
         rendering = false;
+        // 进页面自动测一次(与 LuCI 状态页一致);服务没开时国外项自然测不通
+        if (settings.enabled && !checkRunning) runNetCheck();
     }
 
     private boolean rowVisible(int rowId, boolean visible) {
@@ -272,7 +312,7 @@ public class PasswallActivity extends AppCompatActivity {
         return visible;
     }
 
-    /** 大状态块 + 启停按钮(依赖 enabled 与进程状态两个来源) */
+    /** 运行状态点/文字 + 主开关(依赖 enabled 与进程状态两个来源) */
     private void renderState() {
         if (settings == null) return;
         boolean isRunning = Boolean.TRUE.equals(running);
@@ -293,13 +333,14 @@ public class PasswallActivity extends AppCompatActivity {
             statusText.setText(R.string.pw_state_stopped_big);
             statusText.setTextColor(ContextCompat.getColor(this, R.color.ios_red));
         }
-        btnToggle.setText(settings.enabled ? R.string.proxy_stop : R.string.proxy_start);
-        btnToggle.setIconResource(settings.enabled ? R.drawable.ic_stop : R.drawable.ic_play);
-        btnToggle.setBackgroundTintList(ColorStateList.valueOf(ContextCompat.getColor(this,
-                settings.enabled ? R.color.ios_red : R.color.ios_green)));
+        boolean prevRendering = rendering;
+        rendering = true;
+        mainSwitch.setChecked(settings.enabled);
+        rendering = prevRendering;
         btnRestart.setEnabled(settings.enabled && !busy);
     }
 
+    /** 节点列表:按 group 分组(保持配置里的先后顺序),组头带计数 */
     private void renderNodes() {
         nodeRows.removeAllViews();
         if (settings.nodes.isEmpty()) {
@@ -307,31 +348,51 @@ public class PasswallActivity extends AppCompatActivity {
             return;
         }
         emptyLabel.setVisibility(View.GONE);
+        Map<String, java.util.List<PasswallNode>> groups = new LinkedHashMap<>();
         for (PasswallNode node : settings.nodes) {
-            View row = getLayoutInflater().inflate(
-                    R.layout.item_passwall_node, nodeRows, false);
-            TextView name = row.findViewById(R.id.pwn_name);
-            TextView meta = row.findViewById(R.id.pwn_meta);
-            TextView mark = row.findViewById(R.id.pwn_current);
-            android.widget.RadioButton radio = row.findViewById(R.id.pwn_radio);
-            boolean isCurrent = node.section.equals(settings.nodeId);
-            name.setText(node.displayName());
-            String metaText = node.subtitle();
-            meta.setText(metaText);
-            meta.setVisibility(metaText.isEmpty() ? View.GONE : View.VISIBLE);
-            mark.setVisibility(isCurrent ? View.VISIBLE : View.GONE);
-            radio.setChecked(isCurrent);
-            row.setOnClickListener(v -> {
-                if (busy || isCurrent) return;
-                switchNode(node);
-            });
-            radio.setOnClickListener(v -> {
-                if (busy || isCurrent) return;
-                switchNode(node);
-            });
-            row.setEnabled(!busy);
-            nodeRows.addView(row);
+            String group = node.group == null ? "" : node.group.trim();
+            groups.computeIfAbsent(group, k -> new java.util.ArrayList<>()).add(node);
         }
+        boolean multiGroup = groups.size() > 1;
+        for (Map.Entry<String, java.util.List<PasswallNode>> e : groups.entrySet()) {
+            if (multiGroup || !e.getKey().isEmpty()) {
+                TextView header = (TextView) getLayoutInflater().inflate(
+                        R.layout.item_passwall_group, nodeRows, false);
+                String label = e.getKey().isEmpty()
+                        ? getString(R.string.pw_group_default) : e.getKey();
+                header.setText(getString(R.string.pw_group_count, label, e.getValue().size()));
+                nodeRows.addView(header);
+            }
+            for (PasswallNode node : e.getValue()) {
+                nodeRows.addView(buildNodeRow(node));
+            }
+        }
+    }
+
+    private View buildNodeRow(PasswallNode node) {
+        View row = getLayoutInflater().inflate(
+                R.layout.item_passwall_node, nodeRows, false);
+        TextView name = row.findViewById(R.id.pwn_name);
+        TextView meta = row.findViewById(R.id.pwn_meta);
+        TextView mark = row.findViewById(R.id.pwn_current);
+        android.widget.RadioButton radio = row.findViewById(R.id.pwn_radio);
+        boolean isCurrent = node.section.equals(settings.nodeId);
+        name.setText(node.displayName());
+        String metaText = node.subtitle();
+        meta.setText(metaText);
+        meta.setVisibility(metaText.isEmpty() ? View.GONE : View.VISIBLE);
+        mark.setVisibility(isCurrent ? View.VISIBLE : View.GONE);
+        radio.setChecked(isCurrent);
+        row.setOnClickListener(v -> {
+            if (busy || isCurrent) return;
+            switchNode(node);
+        });
+        radio.setOnClickListener(v -> {
+            if (busy || isCurrent) return;
+            switchNode(node);
+        });
+        row.setEnabled(!busy);
+        return row;
     }
 
     private void showEmpty(String message) {
@@ -347,7 +408,7 @@ public class PasswallActivity extends AppCompatActivity {
     private void setBusy(boolean value) {
         busy = value;
         statusSpinner.setVisibility(value ? View.VISIBLE : View.GONE);
-        btnToggle.setEnabled(!value);
+        mainSwitch.setEnabled(!value);
         btnRefresh.setEnabled(!value);
         modeGroup.setEnabled(!value);
         segTcp.setEnabled(!value);
@@ -357,7 +418,10 @@ public class PasswallActivity extends AppCompatActivity {
         swLocalhost.setEnabled(!value);
         swClient.setEnabled(!value);
         renderState();
-        if (settings != null) renderNodes();
+        if (settings != null) {
+            renderNodes();
+            renderSubscriptions();
+        }
     }
 
     private void toggleEnabled() {
@@ -474,6 +538,10 @@ public class PasswallActivity extends AppCompatActivity {
                 toastError(error);
             }
         });
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     private void toastError(ApiError error) {
@@ -595,5 +663,201 @@ public class PasswallActivity extends AppCompatActivity {
             default:
                 return value;
         }
+    }
+
+    // =====================================================================
+    // 网络状态监测 + IP(路由器侧 curl,口径同 LuCI 状态页)
+    // =====================================================================
+
+    private void runNetCheck() {
+        if (settings == null || checkRunning) return;
+        checkRunning = true;
+        checkCnValue.setText(R.string.pw_check_running);
+        checkGValue.setText(R.string.pw_check_running);
+        PasswallApi.netCheck(settings.socksPort, new ApiCallback<PasswallApi.NetCheck>() {
+            @Override
+            public void onSuccess(PasswallApi.NetCheck result) {
+                if (isFinishing() || isDestroyed()) return;
+                checkRunning = false;
+                if (result.execDenied) {
+                    checkCnValue.setText(R.string.pw_check_denied);
+                    checkGValue.setText(R.string.pw_check_denied);
+                    return;
+                }
+                checkCnValue.setText(result.baiduMs != null
+                        ? result.baiduMs + " ms" : getString(R.string.pw_check_fail));
+                checkGValue.setText(result.googleMs != null
+                        ? result.googleMs + " ms" : getString(R.string.pw_check_fail));
+                ipCnValue.setText(result.cnIp != null ? result.cnIp : "—");
+                ipGValue.setText(result.globalIp != null ? result.globalIp : "—");
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                if (isFinishing() || isDestroyed()) return;
+                checkRunning = false;
+                checkCnValue.setText(R.string.pw_check_tap);
+                checkGValue.setText(R.string.pw_check_tap);
+            }
+        });
+    }
+
+    // =====================================================================
+    // 订阅管理
+    // =====================================================================
+
+    private void renderSubscriptions() {
+        subRows.removeAllViews();
+        if (settings == null) return;
+        subEmpty.setVisibility(settings.subscriptions.isEmpty()
+                ? View.VISIBLE : View.GONE);
+        for (PasswallApi.Subscription sub : settings.subscriptions) {
+            View row = getLayoutInflater().inflate(
+                    R.layout.item_passwall_sub, subRows, false);
+            TextView remark = row.findViewById(R.id.pws_remark);
+            TextView url = row.findViewById(R.id.pws_url);
+            View update = row.findViewById(R.id.pws_update);
+            View delete = row.findViewById(R.id.pws_delete);
+            remark.setText(sub.remark.isEmpty() ? sub.section : sub.remark);
+            // url 可能是多行(多个地址),行内只展示第一行
+            url.setText(sub.url.split("\n")[0].trim());
+            update.setEnabled(!busy);
+            delete.setEnabled(!busy);
+            update.setOnClickListener(v -> {
+                if (!busy) updateSubscription(sub);
+            });
+            delete.setOnClickListener(v -> {
+                if (!busy) confirmDeleteSubscription(sub);
+            });
+            subRows.addView(row);
+        }
+    }
+
+    private void showAddSubscription() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad / 2, pad, 0);
+        EditText remarkInput = new EditText(this);
+        remarkInput.setHint(R.string.pw_sub_remark_hint);
+        remarkInput.setSingleLine(true);
+        EditText urlInput = new EditText(this);
+        urlInput.setHint(R.string.pw_sub_url_hint);
+        urlInput.setSingleLine(false);
+        urlInput.setMaxLines(3);
+        box.addView(remarkInput);
+        box.addView(urlInput);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.pw_sub_add_title)
+                .setView(box)
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.btn_save, (dialog, which) -> {
+                    String remark = remarkInput.getText().toString().trim();
+                    String url = urlInput.getText().toString().trim();
+                    if (url.isEmpty()) {
+                        toast(getString(R.string.pw_sub_url_hint));
+                        return;
+                    }
+                    setBusy(true);
+                    PasswallApi.addSubscription(pwConfig(), remark, url,
+                            new ApiCallback<Boolean>() {
+                                @Override
+                                public void onSuccess(Boolean ok) {
+                                    if (isFinishing() || isDestroyed()) return;
+                                    setBusy(false);
+                                    load();
+                                }
+
+                                @Override
+                                public void onFailure(ApiError error) {
+                                    if (isFinishing() || isDestroyed()) return;
+                                    setBusy(false);
+                                    toast(error.getMessage());
+                                }
+                            });
+                })
+                .show();
+    }
+
+    private void confirmDeleteSubscription(PasswallApi.Subscription sub) {
+        String name = sub.remark.isEmpty() ? sub.section : sub.remark;
+        new MaterialAlertDialogBuilder(this)
+                .setMessage(getString(R.string.pw_sub_delete_confirm, name))
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.pw_sub_delete, (dialog, which) -> {
+                    setBusy(true);
+                    PasswallApi.deleteSubscription(pwConfig(), sub.section,
+                            new ApiCallback<Boolean>() {
+                                @Override
+                                public void onSuccess(Boolean ok) {
+                                    if (isFinishing() || isDestroyed()) return;
+                                    setBusy(false);
+                                    load();
+                                }
+
+                                @Override
+                                public void onFailure(ApiError error) {
+                                    if (isFinishing() || isDestroyed()) return;
+                                    setBusy(false);
+                                    toast(error.getMessage());
+                                }
+                            });
+                })
+                .show();
+    }
+
+    private void updateSubscription(PasswallApi.Subscription sub) {
+        setBusy(true);
+        toast(getString(R.string.pw_sub_updating));
+        PasswallApi.updateSubscription(pwConfig(), sub.section, new ApiCallback<Boolean>() {
+            @Override
+            public void onSuccess(Boolean ok) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                toast(getString(R.string.pw_sub_updated));
+                load();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                if (isFinishing() || isDestroyed()) return;
+                setBusy(false);
+                toast(getString(R.string.pw_sub_update_failed, error.getMessage()));
+            }
+        });
+    }
+
+    /** 全部更新:逐条顺序跑,一条失败不拦后面的 */
+    private void updateAllSubscriptions(int index) {
+        if (settings == null || index >= settings.subscriptions.size()) {
+            if (index > 0) load();
+            return;
+        }
+        PasswallApi.Subscription sub = settings.subscriptions.get(index);
+        if (index == 0) {
+            setBusy(true);
+            toast(getString(R.string.pw_sub_updating));
+        }
+        PasswallApi.updateSubscription(pwConfig(), sub.section, new ApiCallback<Boolean>() {
+            @Override
+            public void onSuccess(Boolean ok) {
+                if (isFinishing() || isDestroyed()) return;
+                if (index + 1 >= settings.subscriptions.size()) {
+                    setBusy(false);
+                    toast(getString(R.string.pw_sub_updated));
+                }
+                updateAllSubscriptions(index + 1);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                if (isFinishing() || isDestroyed()) return;
+                if (index + 1 >= settings.subscriptions.size()) {
+                    setBusy(false);
+                    toast(getString(R.string.pw_sub_update_failed, error.getMessage()));
+                }
+                updateAllSubscriptions(index + 1);
+            }
+        });
     }
 }

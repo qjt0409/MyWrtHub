@@ -91,6 +91,37 @@ public class PasswallApiTest {
     }
 
     @Test
+    public void parse_groupsSubscriptionsAndSocksPort() {
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"cfg010000\":{\".type\":\"global\",\"enabled\":\"1\","
+                + "\"node_socks_port\":\"1071\"},"
+                + "\"cfg020000\":{\".type\":\"nodes\",\"remarks\":\"节点A\","
+                + "\"address\":\"1.2.3.4\",\"port\":\"443\",\"group\":\"机场甲\"},"
+                + "\"cfg030000\":{\".type\":\"subscribe_list\","
+                + "\"remark\":\"机场甲\",\"url\":\"https://example.com/sub\"},"
+                + "\"cfg040000\":{\".type\":\"subscribe_list\","
+                + "\"remark\":\"空订阅\",\"url\":\"\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.PwSettings s = PasswallApi.parse(result);
+        assertEquals("1071", s.socksPort);
+        assertEquals("机场甲", s.nodes.get(0).group);
+        // url 为空的订阅段跳过
+        assertEquals(1, s.subscriptions.size());
+        assertEquals("机场甲", s.subscriptions.get(0).remark);
+        assertEquals("cfg030000", s.subscriptions.get(0).section);
+    }
+
+    @Test
+    public void parseCurlSeconds_convertsAndRejects() {
+        assertEquals(Integer.valueOf(24), PasswallApi.parseCurlSeconds("0.024"));
+        assertEquals(Integer.valueOf(1500), PasswallApi.parseCurlSeconds(" 1.5 "));
+        assertNull(PasswallApi.parseCurlSeconds("0.000"));
+        assertNull(PasswallApi.parseCurlSeconds(""));
+        assertNull(PasswallApi.parseCurlSeconds(null));
+        assertNull(PasswallApi.parseCurlSeconds("abc"));
+    }
+
+    @Test
     public void parse_passwall2GlobalHasOnlyCommonOptions() {
         // passwall2 全局段没有代理模式/DNS 分流键:对应字段必须为 null
         JsonObject result = JsonParser.parseString("{\"values\":{"

@@ -15,8 +15,8 @@
     <string name="metric_devices">Online Devices</string>
     <string name="metric_speed">Speed</string>
     <string name="metric_latency">Latency</string>
-    <string name="metric_wan_down">Total down</string>
-    <string name="metric_wan_up">Total up</string>
+    <string name="metric_wan_down">Down</string>
+    <string name="metric_wan_up">Up</string>
     <string name="metric_wan_month">This month %1$s</string>
 
     <!-- Dashboard sections -->
@@ -555,6 +555,32 @@
     <string name="pw_remote_dns_label">Remote DNS</string>
     <string name="pw_remote_dns_hint">e.g. 1.1.1.1 or a DoH URL</string>
     <string name="pw_not_set">Not set</string>
+    <string name="pw_state_label">Status</string>
+    <string name="pw_main_switch_label">Main switch</string>
+    <string name="pw_pick_label">Node</string>
+    <string name="pw_check_cn_label">Domestic · Baidu</string>
+    <string name="pw_check_g_label">Global · Google</string>
+    <string name="pw_check_tap">Tap to test</string>
+    <string name="pw_check_running">Testing…</string>
+    <string name="pw_check_fail">Unreachable</string>
+    <string name="pw_check_denied">Router denied exec</string>
+    <string name="pw_ip_cn_label">Domestic IP</string>
+    <string name="pw_ip_g_label">Global IP</string>
+    <string name="pw_sub_header">Subscriptions</string>
+    <string name="pw_sub_empty">No subscriptions yet</string>
+    <string name="pw_sub_add">Add</string>
+    <string name="pw_sub_update">Update</string>
+    <string name="pw_sub_delete">Delete</string>
+    <string name="pw_sub_update_all">Update all</string>
+    <string name="pw_sub_add_title">Add subscription</string>
+    <string name="pw_sub_remark_hint">Remark, e.g. provider name</string>
+    <string name="pw_sub_url_hint">Subscription URL</string>
+    <string name="pw_sub_delete_confirm">Delete subscription “%1$s”? Its nodes stay until the next update cleanup.</string>
+    <string name="pw_sub_updating">Updating…</string>
+    <string name="pw_sub_updated">Subscription updated</string>
+    <string name="pw_sub_update_failed">Update failed: %1$s</string>
+    <string name="pw_group_default">Default</string>
+    <string name="pw_group_count">%1$s (%2$d)</string>
     <string name="crash_title">Last crash</string>
     <string name="crash_hint">The app crashed last time. Copy this report and send it to the developer to pinpoint the cause.</string>
     <string name="crash_copy">Copy report</string>

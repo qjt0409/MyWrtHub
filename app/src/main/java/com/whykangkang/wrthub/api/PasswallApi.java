@@ -56,6 +56,10 @@ public final class PasswallApi {
         public Boolean localhostProxy;
         /** 局域网设备透明代理(两者都有) */
         public Boolean clientProxy;
+        /** 节点 Socks 监听端口(国外检测/国外 IP 走它),默认 1070 */
+        public String socksPort = "1070";
+        /** 订阅列表(subscribe_list 段) */
+        public final List<Subscription> subscriptions = new ArrayList<>();
 
         public PasswallNode currentNode() {
             for (PasswallNode n : nodes) {
@@ -63,6 +67,13 @@ public final class PasswallApi {
             }
             return null;
         }
+    }
+
+    /** 一条订阅(subscribe_list 段:remark + url,url 可多行) */
+    public static final class Subscription {
+        public String section = "";
+        public String remark = "";
+        public String url = "";
     }
 
     /** LuCI 全局页的快捷模式:四个预设都是 use_gfw_list/chn_list/TCP/UDP 的组合 */
@@ -164,7 +175,15 @@ public final class PasswallApi {
                     out.remoteDns = optStr(sec, "remote_dns");
                     out.localhostProxy = optBool(sec, "localhost_proxy");
                     out.clientProxy = optBool(sec, "client_proxy");
+                    String socks = optStr(sec, "node_socks_port");
+                    if (socks != null) out.socksPort = socks;
                 }
+            } else if ("subscribe_list".equals(type)) {
+                Subscription sub = new Subscription();
+                sub.section = key;
+                sub.remark = str(sec, "remark", "");
+                sub.url = str(sec, "url", "");
+                if (!sub.url.isEmpty()) out.subscriptions.add(sub);
             } else if ("nodes".equals(type)) {
                 PasswallNode n = new PasswallNode();
                 n.section = key;
@@ -173,6 +192,7 @@ public final class PasswallApi {
                 n.protocol = str(sec, "protocol", "");
                 n.address = str(sec, "address", "");
                 n.port = str(sec, "port", "");
+                n.group = str(sec, "group", "");
                 // 地址、备注都空的是坏数据,展示出来也没法用,跳过
                 if (n.address.isEmpty() && n.remarks.isEmpty()) continue;
                 out.nodes.add(n);
@@ -260,6 +280,193 @@ public final class PasswallApi {
     public static void setQuickMode(PwSettings settings, QuickMode mode,
                                     ApiCallback<Boolean> cb) {
         setOptions(settings, quickModeValues(mode), null, cb);
+    }
+
+    // =====================================================================
+    // 订阅管理(subscribe_list 段增删 + 调路由器侧 subscribe.lua 更新)
+    // =====================================================================
+
+    /** 新增一条订阅(remark + url),落盘即可,不需要重启服务 */
+    public static void addSubscription(String config, String remark, String url,
+                                       ApiCallback<Boolean> cb) {
+        JsonObject values = new JsonObject();
+        values.addProperty("remark", remark);
+        values.addProperty("url", url);
+        api().uciAdd(config, "subscribe_list", null, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                api().uciApplyOrCommit(config, new ApiCallback<JsonObject>() {
+                    @Override
+                    public void onSuccess(JsonObject r) {
+                        cb.onSuccess(true);
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 删除一条订阅(它名下的节点由订阅脚本在下次更新时清理,这里只删订阅本身) */
+    public static void deleteSubscription(String config, String section,
+                                          ApiCallback<Boolean> cb) {
+        api().uciDelete(config, section, null, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                api().uciApplyOrCommit(config, new ApiCallback<JsonObject>() {
+                    @Override
+                    public void onSuccess(JsonObject r) {
+                        cb.onSuccess(true);
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * 更新一条订阅:与 LuCI 同一条命令
+     * (lua /usr/share/&lt;config&gt;/subscribe.lua start &lt;section&gt; manual),
+     * 经 file.exec 执行;订阅拉取+解析可能要几十秒,超时给足 180 秒。
+     * file.exec 被 ACL 拒时如实回调失败。
+     */
+    public static void updateSubscription(String config, String section,
+                                          ApiCallback<Boolean> cb) {
+        String[] args = {"/usr/share/" + config + "/subscribe.lua", "start", section, "manual"};
+        api().fileExec("/usr/bin/lua", args, 180, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                cb.onSuccess(true);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    // =====================================================================
+    // 连通性与 IP 检测(路由器侧 curl,与 LuCI 状态页同口径)
+    // =====================================================================
+
+    /** 检测结果;null = 该项没测通/不可用 */
+    public static final class NetCheck {
+        public Integer baiduMs;
+        public Integer googleMs;
+        public String cnIp;
+        public String globalIp;
+        /** file.exec 被 ACL 拒:整组检测不可用 */
+        public boolean execDenied;
+    }
+
+    /**
+     * 四个 curl 并行跑:百度直连延迟、谷歌经节点 Socks 延迟、
+     * 国内出口 IP、经 Socks 的国外出口 IP。单项失败只影响单项。
+     */
+    public static void netCheck(String socksPort, ApiCallback<NetCheck> cb) {
+        NetCheck out = new NetCheck();
+        java.util.concurrent.atomic.AtomicInteger remaining =
+                new java.util.concurrent.atomic.AtomicInteger(4);
+        Runnable done = () -> {
+            if (remaining.decrementAndGet() == 0) cb.onSuccess(out);
+        };
+        String socks = "127.0.0.1:" + (socksPort == null || socksPort.isEmpty()
+                ? "1070" : socksPort);
+        curlTime(new String[]{"-o", "/dev/null", "-s", "-m", "6", "-w", "%{time_total}",
+                "https://www.baidu.com"}, out, ms -> out.baiduMs = ms, done);
+        curlTime(new String[]{"-o", "/dev/null", "-s", "-m", "6", "-w", "%{time_total}",
+                "--socks5-hostname", socks, "https://www.google.com/generate_204"},
+                out, ms -> out.googleMs = ms, done);
+        curlText(new String[]{"-s", "-m", "6", "http://members.3322.org/dyndns/getip"},
+                out, ip -> out.cnIp = ip, done);
+        curlText(new String[]{"-s", "-m", "6", "--socks5-hostname", socks,
+                "https://api.ipify.org"}, out, ip -> out.globalIp = ip, done);
+    }
+
+    private interface IntSink {
+        void put(Integer v);
+    }
+
+    private interface StrSink {
+        void put(String v);
+    }
+
+    private static void curlTime(String[] args, NetCheck out, IntSink sink, Runnable done) {
+        api().fileExec("curl", args, 12, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                sink.put(parseCurlSeconds(stdoutOf(result)));
+                done.run();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                markDenied(out, error);
+                done.run();
+            }
+        });
+    }
+
+    private static void curlText(String[] args, NetCheck out, StrSink sink, Runnable done) {
+        api().fileExec("curl", args, 12, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                String text = stdoutOf(result);
+                String ip = text == null ? "" : text.trim();
+                sink.put(ip.matches("[0-9a-fA-F.:]+") && !ip.isEmpty() ? ip : null);
+                done.run();
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                markDenied(out, error);
+                done.run();
+            }
+        });
+    }
+
+    private static void markDenied(NetCheck out, ApiError error) {
+        if (error.getType() == ApiError.Type.PERMISSION_DENIED
+                || error.getType() == ApiError.Type.ACCESS_DENIED) {
+            out.execDenied = true;
+        }
+    }
+
+    private static String stdoutOf(JsonObject result) {
+        if (result == null || !result.has("stdout") || result.get("stdout").isJsonNull()) {
+            return null;
+        }
+        return result.get("stdout").getAsString();
+    }
+
+    /** curl -w %{time_total} 的秒数文本 → 毫秒;测不通(空/0)返回 null */
+    static Integer parseCurlSeconds(String text) {
+        if (text == null) return null;
+        try {
+            double sec = Double.parseDouble(text.trim());
+            if (sec <= 0) return null;
+            return (int) Math.round(sec * 1000);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 手动重启服务(用户点的按钮,结果如实回调) */

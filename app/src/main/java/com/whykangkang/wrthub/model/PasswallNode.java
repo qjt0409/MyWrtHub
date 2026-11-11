@@ -15,6 +15,8 @@ public class PasswallNode {
     public String protocol = "";
     public String address = "";
     public String port = "";
+    /** 所属分组(订阅名);手动添加的节点为空,列表按它分组显示 */
+    public String group = "";
 
     /** 列表主标题:有备注用备注,否则用地址:端口 */
     public String displayName() {

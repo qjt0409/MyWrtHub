@@ -338,18 +338,18 @@ public class DashboardFragment extends Fragment {
                         getString(R.string.metric_speed), down, up, null);
             }
             case WAN_DOWN: {
-                if (data.wanTotalRx == null) return null;
+                if (data.wanTodayRx == null) return null;
                 return metricCard(R.drawable.metric_download, R.color.ios_blue,
                         getString(R.string.metric_wan_down),
-                        Formatters.bytes(data.wanTotalRx),
+                        Formatters.bytes(data.wanTodayRx),
                         data.wanMonthRx != null ? getString(R.string.metric_wan_month,
                                 Formatters.bytes(data.wanMonthRx)) : null, null);
             }
             case WAN_UP: {
-                if (data.wanTotalTx == null) return null;
+                if (data.wanTodayTx == null) return null;
                 return metricCard(R.drawable.metric_upload, R.color.ios_orange,
                         getString(R.string.metric_wan_up),
-                        Formatters.bytes(data.wanTotalTx),
+                        Formatters.bytes(data.wanTodayTx),
                         data.wanMonthTx != null ? getString(R.string.metric_wan_month,
                                 Formatters.bytes(data.wanMonthTx)) : null, null);
             }
