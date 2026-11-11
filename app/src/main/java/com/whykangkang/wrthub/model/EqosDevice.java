@@ -29,10 +29,31 @@ public class EqosDevice {
         return comment == null || comment.trim().isEmpty() ? target : comment.trim();
     }
 
-    /** 纯 IPv4 目标按段做数值比较,避免 .10 排在 .9 前面;其余按字符串 */
+    /**
+     * 按目标的起始地址排序:单个 IP、IP 段(取起始 IP)、CIDR(取网络地址)
+     * 都先抽出打头 IPv4 按段做数值比较,避免 .10 排在 .9 前面,
+     * 也避免 IP 段被字符串序排到单个 IP 前面;抽不出的(MAC 等)按字符串。
+     */
     public static int compareTarget(String a, String b) {
-        if (isPlainIpv4(a) && isPlainIpv4(b)) return compareIp(a, b);
+        String ia = leadingIp(a);
+        String ib = leadingIp(b);
+        if (ia != null && ib != null) {
+            int c = compareIp(ia, ib);
+            if (c != 0) return c;
+        }
         return String.valueOf(a).compareTo(String.valueOf(b));
+    }
+
+    /** 取目标打头的 IPv4(IP 段取 '-' 前、CIDR 取 '/' 前);不是 IPv4 返回 null */
+    private static String leadingIp(String s) {
+        if (s == null) return null;
+        int end = s.length();
+        int dash = s.indexOf('-');
+        if (dash >= 0) end = Math.min(end, dash);
+        int slash = s.indexOf('/');
+        if (slash >= 0) end = Math.min(end, slash);
+        String head = s.substring(0, end).trim();
+        return isPlainIpv4(head) ? head : null;
     }
 
     static boolean isPlainIpv4(String s) {
