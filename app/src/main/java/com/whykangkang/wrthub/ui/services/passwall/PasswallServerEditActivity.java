@@ -20,6 +20,7 @@ import com.whykangkang.wrthub.R;
 import com.whykangkang.wrthub.api.ApiCallback;
 import com.whykangkang.wrthub.api.ApiError;
 import com.whykangkang.wrthub.api.PasswallApi;
+import com.whykangkang.wrthub.model.PasswallNode;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -62,6 +63,8 @@ public class PasswallServerEditActivity extends AppCompatActivity {
 
     private PasswallApi.ServerInfo info;
     private PasswallApi.ServerEntry editing;
+    /** 客户端节点(outbound_node 的选项来源);拉不到就只有内置四项 */
+    private final List<PasswallNode> clientNodes = new ArrayList<>();
     private String section;
     /** 动态字段当前值(重建细项区时不丢) */
     private final Map<String, String> cur = new LinkedHashMap<>();
@@ -114,7 +117,21 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                     curUsers.addAll(editing.users);
                     curUser = editing.user;
                 }
-                buildForm();
+                // 出站节点的选项要客户端节点列表;失败不挡表单
+                PasswallApi.getSettings(pwConfig(),
+                        new ApiCallback<PasswallApi.PwSettings>() {
+                            @Override
+                            public void onSuccess(PasswallApi.PwSettings settings) {
+                                clientNodes.clear();
+                                clientNodes.addAll(settings.nodes);
+                                buildForm();
+                            }
+
+                            @Override
+                            public void onFailure(ApiError error) {
+                                buildForm();
+                            }
+                        });
             }
 
             @Override
@@ -217,8 +234,8 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         spinValues.clear();
         flagMap.clear();
         buildTypeFields();
-        // TLS / REALITY 开关变化时细项跟着变
-        for (String key : new String[]{"tls", "reality"}) {
+        // 这些开关变化时细项跟着变
+        for (String key : new String[]{"tls", "reality", "tls_use_pem", "custom"}) {
             SwitchMaterial sw = flagMap.get(key);
             if (sw != null) {
                 sw.setOnCheckedChangeListener((v, checked) -> {
@@ -228,13 +245,28 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                 });
             }
         }
-        rebuildUsers();
+        // 自定义配置模式下 LuCI 没有用户绑定
+        if (curFlag("custom", false) && !"Socks".equals(currentType())) {
+            usersBox.removeAllViews();
+        } else {
+            rebuildUsers();
+        }
         building = false;
     }
 
     private void buildTypeFields() {
         String type = currentType();
         String proto = currentProtocol();
+        // 自定义配置(除 Socks 外都有):开启后 LuCI 只剩这一个大文本框
+        if (!"Socks".equals(type)) {
+            addFlagTo("custom", R.string.pwse_custom, curFlag("custom", false));
+            if (curFlag("custom", false)) {
+                addBigTextTo("custom_config", R.string.pwse_custom_config,
+                        cur.getOrDefault("custom_config", ""));
+                buildTail(type);
+                return;
+            }
+        }
         switch (type) {
             case "Socks":
                 addFlagTo("auth", R.string.pwse_auth, curFlag("auth", false));
@@ -281,7 +313,14 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             default:
                 break;
         }
-        // 通用尾巴:日志 + 防火墙放行(LuCI 各类型都有)
+        if ("sing-box".equals(type) || "Xray".equals(type)) {
+            addOutboundGroup();
+        }
+        buildTail(type);
+    }
+
+    /** 通用尾巴:日志 + 防火墙放行(LuCI 各类型都有) */
+    private void buildTail(String type) {
         addFlagTo("log", R.string.pwse_log, curFlag("log", true));
         addFlagTo("firewall_allow", R.string.pwse_firewall,
                 curFlag("firewall_allow", false));
@@ -291,6 +330,31 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             addFlagTo("accept_lan", R.string.pwse_accept_lan,
                     curFlag("accept_lan", false));
         }
+    }
+
+    /** 出站节点:关 / 自定义 Socks / HTTP / 接口 / 某个客户端节点 */
+    private void addOutboundGroup() {
+        List<String> values = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        values.add("");
+        labels.add(getString(R.string.pwse_outbound_off));
+        values.add("_socks");
+        labels.add(getString(R.string.pwse_outbound_socks));
+        values.add("_http");
+        labels.add(getString(R.string.pwse_outbound_http));
+        values.add("_iface");
+        labels.add(getString(R.string.pwse_outbound_iface));
+        for (PasswallNode n : clientNodes) {
+            values.add(n.section);
+            labels.add(n.remarks.isEmpty() ? n.section : n.remarks);
+        }
+        addSpinnerTo("outbound_node", R.string.pwse_outbound,
+                values.toArray(new String[0]), labels.toArray(new String[0]),
+                cur.getOrDefault("outbound_node", ""));
+        addTextTo("outbound_node_address", R.string.pwse_outbound_addr,
+                cur.getOrDefault("outbound_node_address", ""), false);
+        addTextTo("outbound_node_port", R.string.pwse_outbound_port,
+                cur.getOrDefault("outbound_node_port", ""), true);
     }
 
     private void buildSingboxFields(String proto) {
@@ -331,6 +395,14 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                         cur.getOrDefault("hysteria_up_mbps", ""), true);
                 addTextTo("hysteria_down_mbps", R.string.pwse_down_mbps,
                         cur.getOrDefault("hysteria_down_mbps", ""), true);
+                addTextTo("hysteria_recv_window_conn", R.string.pwse_hy_win_conn,
+                        cur.getOrDefault("hysteria_recv_window_conn", ""), true);
+                addTextTo("hysteria_recv_window_client", R.string.pwse_hy_win_client,
+                        cur.getOrDefault("hysteria_recv_window_client", ""), true);
+                addTextTo("hysteria_max_conn_client", R.string.pwse_hy_max_conn,
+                        cur.getOrDefault("hysteria_max_conn_client", ""), true);
+                addFlagTo("hysteria_disable_mtu_discovery", R.string.pwse_hy_no_mtu,
+                        curFlag("hysteria_disable_mtu_discovery", false));
                 addTlsGroup(false, proto);
                 break;
             case "hysteria2":
@@ -360,6 +432,20 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                 break;
             case "wireguard":
                 addWireguardFields();
+                break;
+            case "snell":
+                addSpinnerTo("snell_version", R.string.pwse_snell_version,
+                        new String[]{"5", "6"}, new String[]{"5", "6"},
+                        cur.getOrDefault("snell_version", "5"));
+                addTextTo("snell_psk", R.string.pwse_snell_psk,
+                        cur.getOrDefault("snell_psk", ""), false);
+                addSpinnerTo("snell_obfs_mode", R.string.pwse_snell_obfs,
+                        new String[]{"none", "http"}, new String[]{"none", "http"},
+                        cur.getOrDefault("snell_obfs_mode", "none"));
+                addSpinnerTo("snell_mode", R.string.pwse_snell_mode,
+                        new String[]{"default", "unshaped", "unsafe-raw"},
+                        new String[]{"default", "unshaped", "unsafe-raw"},
+                        cur.getOrDefault("snell_mode", "default"));
                 break;
             default:
                 break;
@@ -404,6 +490,9 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                         cur.getOrDefault("fallback_path", ""), false);
                 addTextTo("fallback_dest", R.string.pwse_fb_dest,
                         cur.getOrDefault("fallback_dest", ""), false);
+                addTextTo("fallback_xver", R.string.pwse_fb_xver,
+                        cur.getOrDefault("fallback_xver", ""), true);
+                addListTextTo("fallback_list", R.string.pwse_fb_list);
                 break;
             case "hysteria2":
                 addHysteria2Fields();
@@ -501,6 +590,10 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                 addTextTo("reality_dest", R.string.pwse_reality_dest,
                         cur.getOrDefault("reality_dest", ""), false);
                 addListTextTo("reality_serverNames", R.string.pwse_reality_servernames);
+                addFlagTo("use_mldsa65Seed", R.string.pwse_mldsa,
+                        curFlag("use_mldsa65Seed", false));
+                addBigTextTo("reality_mldsa65Seed", R.string.pwse_mldsa_key,
+                        cur.getOrDefault("reality_mldsa65Seed", ""));
             } else {
                 addTextTo("reality_handshake_server", R.string.pwse_reality_handshake,
                         cur.getOrDefault("reality_handshake_server", ""), false);
@@ -509,13 +602,28 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                         cur.getOrDefault("reality_handshake_server_port", ""), true);
             }
         } else {
-            addTextTo("tls_certificateFile", R.string.pwse_cert_file,
-                    cur.getOrDefault("tls_certificateFile", ""), false);
-            addTextTo("tls_keyFile", R.string.pwse_key_file,
-                    cur.getOrDefault("tls_keyFile", ""), false);
+            addFlagTo("tls_use_pem", R.string.pwse_use_pem,
+                    curFlag("tls_use_pem", false));
+            if (curFlag("tls_use_pem", false)) {
+                addBigTextTo("tls_certificate", R.string.pwse_pem_cert,
+                        cur.getOrDefault("tls_certificate", ""));
+                addBigTextTo("tls_key", R.string.pwse_pem_key,
+                        cur.getOrDefault("tls_key", ""));
+            } else {
+                addTextTo("tls_certificateFile", R.string.pwse_cert_file,
+                        cur.getOrDefault("tls_certificateFile", ""), false);
+                addTextTo("tls_keyFile", R.string.pwse_key_file,
+                        cur.getOrDefault("tls_keyFile", ""), false);
+            }
             addFlagTo("ech", R.string.pwse_ech, curFlag("ech", false));
             addTextTo("ech_key", R.string.pwse_ech_key,
                     cur.getOrDefault("ech_key", ""), false);
+        }
+        if (xray) {
+            addFlagTo("use_finalmask", R.string.pwse_finalmask,
+                    curFlag("use_finalmask", false));
+            addBigTextTo("finalmask", R.string.pwse_finalmask_json,
+                    cur.getOrDefault("finalmask", ""));
         }
     }
 
@@ -757,6 +865,10 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             set.put(key, cur.getOrDefault(key, "0"));
         }
         PasswallApi.UserMode mode = PasswallApi.userModeFor(type, currentProtocol());
+        // 自定义配置模式:不带用户绑定(与 LuCI 一致)
+        if (!"Socks".equals(type) && "1".equals(cur.get("custom"))) {
+            mode = PasswallApi.UserMode.NONE;
+        }
         List<String> usersParam = null;
         if (mode == PasswallApi.UserMode.MULTI) {
             usersParam = new ArrayList<>(curUsers);
@@ -959,6 +1071,19 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         et.setHint(R.string.pwse_list_hint);
         extrasBox.addView(et);
         listTextMap.put(key, et);
+    }
+
+    /** 多行大文本(自定义配置 JSON / PEM 内容等),按标量键存 */
+    private void addBigTextTo(String key, int labelRes, String value) {
+        addLabelTo(extrasBox, labelRes);
+        EditText et = new EditText(this);
+        et.setText(value);
+        et.setTextSize(14);
+        et.setMinLines(5);
+        et.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        et.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        extrasBox.addView(et);
+        textMap.put(key, et);
     }
 
     private Spinner addSpinner(int labelRes, String[] values, String[] labels,

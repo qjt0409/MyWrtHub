@@ -1,5 +1,6 @@
 package com.whykangkang.wrthub.api;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -478,7 +479,7 @@ public final class PasswallApi {
         if ("sing-box".equals(type)) {
             return new String[]{"direct", "mixed", "socks", "http", "shadowsocks",
                     "vmess", "vless", "trojan", "naive", "anytls",
-                    "hysteria", "hysteria2", "tuic"};
+                    "hysteria", "hysteria2", "tuic", "snell"};
         }
         if ("Xray".equals(type)) {
             return new String[]{"socks", "http", "vmess", "vless", "shadowsocks",
@@ -518,6 +519,11 @@ public final class PasswallApi {
     public static final class PwServerUser {
         public String section = "";
         public String username = "";
+        /** 段内全部标量键(编辑回填用:password/uuid/WireGuard 密钥等) */
+        public final java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
+        /** 段内列表键(如 allowed_ips) */
+        public final java.util.Map<String, List<String>> listFields =
+                new java.util.LinkedHashMap<>();
     }
 
     /** 一个服务实例(server 段) */
@@ -618,6 +624,19 @@ public final class PasswallApi {
                 PwServerUser u = new PwServerUser();
                 u.section = key;
                 u.username = str(sec, "username", "");
+                for (String k : sec.keySet()) {
+                    if (k.startsWith(".")) continue;
+                    JsonElement v = sec.get(k);
+                    if (v != null && v.isJsonPrimitive()) {
+                        u.fields.put(k, v.getAsString());
+                    } else if (v != null && v.isJsonArray()) {
+                        List<String> items = new ArrayList<>();
+                        for (JsonElement e : v.getAsJsonArray()) {
+                            items.add(e.getAsString());
+                        }
+                        u.listFields.put(k, items);
+                    }
+                }
                 out.users.add(u);
             } else if ("server".equals(type)) {
                 ServerEntry e = new ServerEntry();
@@ -806,12 +825,120 @@ public final class PasswallApi {
     /** 新建一个服务端用户(username/password/uuid),只落盘不重启 */
     public static void addServerUser(String config, String username, String password,
                                      String uuid, ApiCallback<Boolean> cb) {
+        addServerUserFull(config, username, password, uuid, new ApiCallback<String>() {
+            @Override
+            public void onSuccess(String section) {
+                cb.onSuccess(true);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 新建服务端用户,回调返回新段名(便于紧接着补写 WireGuard 等字段) */
+    public static void addServerUserFull(String config, String username, String password,
+                                         String uuid, ApiCallback<String> cb) {
         JsonObject values = new JsonObject();
         values.addProperty("username", username);
         values.addProperty("password", password);
         values.addProperty("uuid", uuid);
         String cfg = serverConfigOf(config);
         api().uciAdd(cfg, "user", null, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                String newSection = result != null && result.has("section")
+                        ? result.get("section").getAsString() : "";
+                api().uciApplyOrCommit(cfg, new ApiCallback<JsonObject>() {
+                    @Override
+                    public void onSuccess(JsonObject r2) {
+                        cb.onSuccess(newSection);
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 编辑一个服务端用户(改名/改密码/改 UUID 等),只落盘不重启 */
+    public static void updateServerUser(String config, String section,
+                                        java.util.Map<String, String> set,
+                                        List<String> del,
+                                        java.util.Map<String, List<String>> lists,
+                                        ApiCallback<Boolean> cb) {
+        String cfg = serverConfigOf(config);
+        JsonObject values = new JsonObject();
+        for (java.util.Map.Entry<String, String> e : set.entrySet()) {
+            values.addProperty(e.getKey(), e.getValue());
+        }
+        if (lists != null) {
+            for (java.util.Map.Entry<String, List<String>> e : lists.entrySet()) {
+                JsonArray arr = new JsonArray();
+                for (String v : e.getValue()) {
+                    arr.add(v);
+                }
+                values.add(e.getKey(), arr);
+            }
+        }
+        api().uciSet(cfg, section, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                deleteOptionsNoApply(cfg, section, del, 0, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    private static void deleteOptionsNoApply(String cfg, String section,
+                                             List<String> options, int index,
+                                             ApiCallback<Boolean> cb) {
+        if (section == null || index >= options.size()) {
+            api().uciApplyOrCommit(cfg, new ApiCallback<JsonObject>() {
+                @Override
+                public void onSuccess(JsonObject result) {
+                    cb.onSuccess(true);
+                }
+
+                @Override
+                public void onFailure(ApiError error) {
+                    cb.onFailure(error);
+                }
+            });
+            return;
+        }
+        api().uciDelete(cfg, section, options.get(index), new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                deleteOptionsNoApply(cfg, section, options, index + 1, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                deleteOptionsNoApply(cfg, section, options, index + 1, cb);
+            }
+        });
+    }
+
+    /** 删除一个服务端用户(引用它的实例会失去该绑定,与 LuCI 行为一致) */
+    public static void deleteServerUser(String config, String section,
+                                        ApiCallback<Boolean> cb) {
+        String cfg = serverConfigOf(config);
+        api().uciDelete(cfg, section, null, new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
                 api().uciApplyOrCommit(cfg, new ApiCallback<JsonObject>() {

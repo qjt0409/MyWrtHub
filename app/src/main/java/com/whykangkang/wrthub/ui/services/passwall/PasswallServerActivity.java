@@ -47,6 +47,11 @@ public class PasswallServerActivity extends AppCompatActivity {
         return PasswallServerEditActivity.class;
     }
 
+    /** 用户管理页的类(PassWall2 子类覆写) */
+    protected Class<?> usersActivityClass() {
+        return PasswallServerUsersActivity.class;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -75,6 +80,8 @@ public class PasswallServerActivity extends AppCompatActivity {
                     new android.content.Intent(this, editActivityClass());
             startActivity(intent);
         });
+        findViewById(R.id.pws_users_card).setOnClickListener(v ->
+                startActivity(new android.content.Intent(this, usersActivityClass())));
         load();
     }
 

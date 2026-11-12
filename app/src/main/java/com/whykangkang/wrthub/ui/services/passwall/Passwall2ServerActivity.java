@@ -20,4 +20,9 @@ public class Passwall2ServerActivity extends PasswallServerActivity {
     protected Class<?> editActivityClass() {
         return Passwall2ServerEditActivity.class;
     }
+
+    @Override
+    protected Class<?> usersActivityClass() {
+        return Passwall2ServerUsersActivity.class;
+    }
 }

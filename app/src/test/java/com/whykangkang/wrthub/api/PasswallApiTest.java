@@ -284,7 +284,7 @@ public class PasswallApiTest {
 
     @Test
     public void protocolsFor_onlySingboxAndXray() {
-        assertEquals(13, PasswallApi.protocolsFor("sing-box").length);
+        assertEquals(14, PasswallApi.protocolsFor("sing-box").length);
         assertEquals(10, PasswallApi.protocolsFor("Xray").length);
         assertEquals(0, PasswallApi.protocolsFor("Socks").length);
         assertEquals(0, PasswallApi.protocolsFor("SSR").length);
