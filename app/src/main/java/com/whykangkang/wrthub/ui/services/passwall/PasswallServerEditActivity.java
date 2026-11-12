@@ -73,6 +73,9 @@ public class PasswallServerEditActivity extends AppCompatActivity {
     private String curUser = "";
     private boolean busy;
     private boolean building;
+    /** 类型/协议下拉的上次确认值:用来吞掉布局后补发的初始选中事件(值没变不重建) */
+    private String lastType;
+    private String lastProtocol;
 
     protected String pwConfig() {
         return PasswallApi.CONFIG;
@@ -182,10 +185,14 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         note.setPadding(0, dp(16), 0, 0);
         form.addView(note);
 
+        lastType = editing != null ? editing.type : "sing-box";
         spType.setOnItemSelectedListener(new SimpleItemSelected() {
             @Override
             public void onItemSelected(int position) {
                 if (building) return;
+                String t = PasswallApi.SERVER_TYPES[position];
+                if (t.equals(lastType)) return;
+                lastType = t;
                 harvestAll();
                 cur.remove("protocol");
                 buildProtocolSpinner();
@@ -210,12 +217,16 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         }
         if (protocolValues.length > 0) {
             String proto = cur.getOrDefault("protocol", protocolValues[0]);
+            lastProtocol = proto;
             spProtocol = addSpinnerTo(protocolBox, null, R.string.pwse_protocol,
                     protocolValues, protocolLabels(protocolValues), proto);
             spProtocol.setOnItemSelectedListener(new SimpleItemSelected() {
                 @Override
                 public void onItemSelected(int position) {
                     if (building) return;
+                    String p = protocolValues[position];
+                    if (p.equals(lastProtocol)) return;
+                    lastProtocol = p;
                     harvestAll();
                     rebuildExtras();
                 }
@@ -688,13 +699,19 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             default:
                 break;
         }
-        // transport 本身也要在切换时重建细项
+        // transport 本身也要在切换时重建细项;但新建的 Spinner 在布局后会补发
+        // 一次初始选中事件,值没变时必须忽略,否则会无限重建、界面假死
         Spinner sp = spinMap.get("transport");
         if (sp != null) {
             sp.setOnItemSelectedListener(new SimpleItemSelected() {
                 @Override
                 public void onItemSelected(int position) {
                     if (building) return;
+                    String[] vals = spinValues.get("transport");
+                    if (vals == null || position < 0 || position >= vals.length) {
+                        return;
+                    }
+                    if (vals[position].equals(transport)) return;
                     harvestAll();
                     rebuildExtras();
                 }
