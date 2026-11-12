@@ -1,1 +1,1 @@
-{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.9:PassWall 与 PassWall2 主页新增「服务端」入口行,点进二级页:服务端总开关 + 服务实例列表(逐个开关与运行状态),与 LuCI 服务端页同源。含 1.8 的服务页精简。", "versionCode": 10, "versionName": "1.9"}
+{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.10:服务端支持新增/编辑/删除服务实例(按类型动态表单+用户绑定,可新建用户)。同时修正 1.9 的服务端配置定位:服务端数据在独立的 passwall_server 配置里,1.9 误读了 passwall 配置,开关实际不生效,本版已改对。", "versionCode": 11, "versionName": "1.10"}

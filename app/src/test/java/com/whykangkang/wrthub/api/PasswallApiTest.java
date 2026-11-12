@@ -229,4 +229,64 @@ public class PasswallApiTest {
         assertTrue(!PasswallApi.parseServerStatus("not json"));
         assertTrue(!PasswallApi.parseServerStatus("{}"));
     }
+
+    @Test
+    public void serverConfigOf_appendsServerSuffix() {
+        // 服务端数据在独立配置里,不是客户端配置
+        assertEquals("passwall_server", PasswallApi.serverConfigOf("passwall"));
+        assertEquals("passwall2_server", PasswallApi.serverConfigOf("passwall2"));
+    }
+
+    @Test
+    public void parseServer_usersAndBindings() {
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"global\":{\".type\":\"global\",\"enable\":\"0\"},"
+                + "\"u1\":{\".type\":\"user\",\"username\":\"alice\"},"
+                + "\"u2\":{\".type\":\"user\",\"username\":\"bob\"},"
+                + "\"s1\":{\".type\":\"server\",\"enable\":\"1\",\"remarks\":\"多用户\","
+                + "\"type\":\"Xray\",\"protocol\":\"vless\",\"port\":\"443\","
+                + "\"users\":[\"u1\",\"u2\"]},"
+                + "\"s2\":{\".type\":\"server\",\"enable\":\"0\",\"remarks\":\"单用户\","
+                + "\"type\":\"SS-Rust\",\"port\":\"8388\",\"user\":\"u1\","
+                + "\"method\":\"aes-256-gcm\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.ServerInfo info = PasswallApi.parseServer(result);
+        assertEquals(2, info.users.size());
+        assertEquals("alice", info.users.get(0).username);
+        assertEquals(2, info.servers.get(0).users.size());
+        assertEquals("u2", info.servers.get(0).users.get(1));
+        assertEquals("u1", info.servers.get(1).user);
+        // 编辑回填用的原始字段也在
+        assertEquals("aes-256-gcm", info.servers.get(1).fields.get("method"));
+    }
+
+    @Test
+    public void userModeFor_matchesLuciBinding() {
+        assertEquals(PasswallApi.UserMode.SINGLE,
+                PasswallApi.userModeFor("Socks", ""));
+        assertEquals(PasswallApi.UserMode.SINGLE,
+                PasswallApi.userModeFor("SS-Rust", ""));
+        assertEquals(PasswallApi.UserMode.SINGLE,
+                PasswallApi.userModeFor("SSR", ""));
+        assertEquals(PasswallApi.UserMode.MULTI,
+                PasswallApi.userModeFor("sing-box", "vmess"));
+        assertEquals(PasswallApi.UserMode.NONE,
+                PasswallApi.userModeFor("sing-box", "direct"));
+        assertEquals(PasswallApi.UserMode.NONE,
+                PasswallApi.userModeFor("sing-box", "shadowsocks"));
+        assertEquals(PasswallApi.UserMode.NONE,
+                PasswallApi.userModeFor("Xray", "shadowsocks"));
+        assertEquals(PasswallApi.UserMode.MULTI,
+                PasswallApi.userModeFor("Xray", "vless"));
+        assertEquals(PasswallApi.UserMode.MULTI,
+                PasswallApi.userModeFor("Hysteria2", ""));
+    }
+
+    @Test
+    public void protocolsFor_onlySingboxAndXray() {
+        assertEquals(13, PasswallApi.protocolsFor("sing-box").length);
+        assertEquals(10, PasswallApi.protocolsFor("Xray").length);
+        assertEquals(0, PasswallApi.protocolsFor("Socks").length);
+        assertEquals(0, PasswallApi.protocolsFor("SSR").length);
+    }
 }

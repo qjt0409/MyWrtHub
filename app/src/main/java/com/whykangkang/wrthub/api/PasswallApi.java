@@ -425,12 +425,100 @@ public final class PasswallApi {
     }
 
     // =====================================================================
-    // 服务端(LuCI 的 server 页):路由器自己当代理服务器
-    //   总开关 = 全局段的 enable 键(与客户端总开关 enabled 是两个键,同段并存);
-    //   服务实例 = type=server 的段{enable, remarks, type, protocol, port};
-    //   单个实例的运行状态走 CGI server_status(查进程,口径同 LuCI 列表页)。
-    //   PassWall2 结构相同(仅少一个 start_delay 键,不影响本页)。
+    // 服务端(LuCI 的 server 页):路由器自己当代理服务器。
+    // 【关键】服务端数据不在 passwall 配置里,而在独立的 passwall_server
+    // 配置(全局段 global{enable, start_delay}、server 段、user 段),
+    // 独立 init 脚本 passwall_server;PassWall2 对应 passwall2_server。
+    // rpcd ACL 同时授权了这两个 server 配置的 uci 读写。
+    //   总开关 = server 配置全局段的 enable 键(与客户端 enabled 无关);
+    //   凭据在 user 段{username, password, uuid},实例以 user(单选:
+    //   Socks/SS-Rust/SSR)或 users(多选:sing-box/Xray/Hysteria2)引用;
+    //   sing-box/Xray 的 shadowsocks 例外:密码在实例自身的 ss_password。
     // =====================================================================
+
+    /** 服务端配置名:passwall -> passwall_server */
+    static String serverConfigOf(String baseConfig) {
+        return baseConfig + "_server";
+    }
+
+    /** 支持的服务端类型(uci 里的 type 值,顺序同 LuCI) */
+    public static final String[] SERVER_TYPES = {
+            "Socks", "sing-box", "Xray", "SS-Rust", "SSR", "Hysteria2"};
+
+    /** sing-box / Xray 的 Shadowsocks 加密方式(上游 ss_method_list) */
+    public static final String[] SS_METHODS = {
+            "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305", "xchacha20-poly1305",
+            "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+            "2022-blake3-chacha20-poly1305"};
+
+    /** SS-Rust 的加密方式(上游 ssrust_encrypt_method_list) */
+    public static final String[] SSRUST_METHODS = {
+            "plain", "none", "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305",
+            "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
+            "2022-blake3-chacha20-poly1305"};
+
+    /** SSR 的加密方式 / 协议 / 混淆(上游 ssr_*_list) */
+    public static final String[] SSR_METHODS = {
+            "none", "table", "rc2-cfb", "rc4", "rc4-md5", "rc4-md5-6", "aes-128-cfb",
+            "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr",
+            "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb",
+            "cast5-cfb", "des-cfb", "idea-cfb", "seed-cfb", "salsa20", "chacha20",
+            "chacha20-ietf"};
+    public static final String[] SSR_PROTOCOLS = {
+            "origin", "verify_simple", "verify_deflate", "verify_sha1", "auth_simple",
+            "auth_sha1", "auth_sha1_v2", "auth_sha1_v4", "auth_aes128_md5",
+            "auth_aes128_sha1", "auth_chain_a", "auth_chain_b", "auth_chain_c",
+            "auth_chain_d", "auth_chain_e", "auth_chain_f"};
+    public static final String[] SSR_OBFS = {
+            "plain", "http_simple", "http_post", "random_head", "tls_simple",
+            "tls1.0_session_auth", "tls1.2_ticket_auth"};
+
+    /** 各类型的协议选项(仅 sing-box / Xray 有 protocol 键;SSR 的 protocol 是另一套) */
+    public static String[] protocolsFor(String type) {
+        if ("sing-box".equals(type)) {
+            return new String[]{"direct", "mixed", "socks", "http", "shadowsocks",
+                    "vmess", "vless", "trojan", "naive", "anytls",
+                    "hysteria", "hysteria2", "tuic"};
+        }
+        if ("Xray".equals(type)) {
+            return new String[]{"socks", "http", "vmess", "vless", "shadowsocks",
+                    "trojan", "hysteria2", "wireguard", "masque", "tunnel"};
+        }
+        return new String[0];
+    }
+
+    /** 用户绑定方式:NONE 无 / SINGLE 单选(user 键)/ MULTI 多选(users 键) */
+    public enum UserMode { NONE, SINGLE, MULTI }
+
+    public static UserMode userModeFor(String type, String protocol) {
+        switch (type == null ? "" : type) {
+            case "Socks":
+            case "SS-Rust":
+            case "SSR":
+                return UserMode.SINGLE;
+            case "sing-box":
+                // direct 不绑用户;shadowsocks 用实例自带 ss_password,也不绑
+                if ("direct".equals(protocol) || "shadowsocks".equals(protocol)) {
+                    return UserMode.NONE;
+                }
+                return UserMode.MULTI;
+            case "Xray":
+                if ("shadowsocks".equals(protocol) || "tunnel".equals(protocol)) {
+                    return UserMode.NONE;
+                }
+                return UserMode.MULTI;
+            case "Hysteria2":
+                return UserMode.MULTI;
+            default:
+                return UserMode.NONE;
+        }
+    }
+
+    /** 一个服务端用户(user 段) */
+    public static final class PwServerUser {
+        public String section = "";
+        public String username = "";
+    }
 
     /** 一个服务实例(server 段) */
     public static final class ServerEntry {
@@ -440,6 +528,11 @@ public final class PasswallApi {
         public String type = "";
         public String protocol = "";
         public String port = "";
+        /** 单选用户(user 键);多选用户(users 键) */
+        public String user = "";
+        public final List<String> users = new ArrayList<>();
+        /** 段内全部标量键(编辑表单回填用,含本页不展示的键,只读不写回) */
+        public final java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
 
         /** 类型展示名,口径同 LuCI:Xray/sing-box 拼协议名,其余显示 type 原文 */
         public String displayType() {
@@ -448,10 +541,12 @@ public final class PasswallApi {
                 String p = protocolDisplay(protocol);
                 return p.isEmpty() ? td : td + " " + p;
             }
+            if ("SS-Rust".equals(type)) return "Shadowsocks Rust";
+            if ("SSR".equals(type)) return "ShadowsocksR";
             return type == null ? "" : type;
         }
 
-        static String protocolDisplay(String p) {
+        public static String protocolDisplay(String p) {
             if (p == null) return "";
             switch (p) {
                 case "vmess": return "VMess";
@@ -468,17 +563,26 @@ public final class PasswallApi {
         }
     }
 
-    /** 服务端整页数据:总开关 + 实例列表 */
+    /** 服务端整页数据:总开关 + 实例列表 + 用户列表 */
     public static final class ServerInfo {
+        /** 基础配置名(passwall / passwall2) */
         public String config = CONFIG;
         public String globalSection = "";
-        /** 服务端总开关(global 段 enable 键);键不存在 = 关 */
+        /** 服务端总开关(server 配置 global 段 enable 键);键不存在 = 关 */
         public boolean serverEnabled;
         public final List<ServerEntry> servers = new ArrayList<>();
+        public final List<PwServerUser> users = new ArrayList<>();
+
+        public ServerEntry entry(String section) {
+            for (ServerEntry e : servers) {
+                if (e.section.equals(section)) return e;
+            }
+            return null;
+        }
     }
 
     public static void getServerInfo(String config, ApiCallback<ServerInfo> cb) {
-        api().uciGetConfig(config, new ApiCallback<JsonObject>() {
+        api().uciGetConfig(serverConfigOf(config), new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
                 ServerInfo parsed = parseServer(result);
@@ -507,6 +611,11 @@ public final class PasswallApi {
                     out.globalSection = key;
                     out.serverEnabled = EqosApi.uciBool(sec, "enable", false);
                 }
+            } else if ("user".equals(type)) {
+                PwServerUser u = new PwServerUser();
+                u.section = key;
+                u.username = str(sec, "username", "");
+                out.users.add(u);
             } else if ("server".equals(type)) {
                 ServerEntry e = new ServerEntry();
                 e.section = key;
@@ -515,13 +624,37 @@ public final class PasswallApi {
                 e.type = str(sec, "type", "");
                 e.protocol = str(sec, "protocol", "");
                 e.port = str(sec, "port", "");
+                e.user = str(sec, "user", "");
+                e.users.addAll(strList(sec, "users"));
+                for (String k : sec.keySet()) {
+                    if (k.startsWith(".")) continue;
+                    JsonElement v = sec.get(k);
+                    if (v != null && v.isJsonPrimitive()) {
+                        e.fields.put(k, v.getAsString());
+                    }
+                }
                 out.servers.add(e);
             }
         }
         return out;
     }
 
-    /** 服务端总开关:写全局段 enable 键,apply 后重启服务生效 */
+    /** uci 列表值:可能是数组,也可能只有一个元素时退化成字符串 */
+    static List<String> strList(JsonObject o, String key) {
+        List<String> out = new ArrayList<>();
+        JsonElement e = o.get(key);
+        if (e == null || e.isJsonNull()) return out;
+        if (e.isJsonArray()) {
+            for (JsonElement item : e.getAsJsonArray()) {
+                if (item != null && item.isJsonPrimitive()) out.add(item.getAsString());
+            }
+        } else if (e.isJsonPrimitive()) {
+            out.add(e.getAsString());
+        }
+        return out;
+    }
+
+    /** 服务端总开关:写 server 配置全局段 enable 键,apply 后重启 server 服务生效 */
     public static void setServerEnabled(ServerInfo info, boolean on,
                                         ApiCallback<Boolean> cb) {
         if (info.globalSection.isEmpty()) {
@@ -530,10 +663,11 @@ public final class PasswallApi {
         }
         JsonObject values = new JsonObject();
         values.addProperty("enable", on ? "1" : "0");
-        api().uciSet(info.config, info.globalSection, values, new ApiCallback<JsonObject>() {
+        String cfg = serverConfigOf(info.config);
+        api().uciSet(cfg, info.globalSection, values, new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
-                apply(info.config, null, cb);
+                apply(cfg, null, cb);
             }
 
             @Override
@@ -543,15 +677,134 @@ public final class PasswallApi {
         });
     }
 
-    /** 单个服务实例的开关:写该段 enable 键,apply 后重启服务生效 */
+    /** 单个服务实例的开关:写该段 enable 键,apply 后重启 server 服务生效 */
     public static void setServerEntryEnabled(String config, String section, boolean on,
                                              ApiCallback<Boolean> cb) {
         JsonObject values = new JsonObject();
         values.addProperty("enable", on ? "1" : "0");
-        api().uciSet(config, section, values, new ApiCallback<JsonObject>() {
+        String cfg = serverConfigOf(config);
+        api().uciSet(cfg, section, values, new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
-                apply(config, null, cb);
+                apply(cfg, null, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * 新增(section 为 null)或编辑一个服务实例。
+     * set 是要写入的标量键;del 是要删掉的键(表单清空的项);
+     * users 非 null 时写 users 列表(空列表 = 删掉 users 键)。
+     * 本页不管理的键(传输/TLS/自定义配置等)一概不动。
+     */
+    public static void saveServer(String config, String section,
+                                  java.util.Map<String, String> set, List<String> del,
+                                  List<String> users, ApiCallback<Boolean> cb) {
+        String cfg = serverConfigOf(config);
+        JsonObject values = new JsonObject();
+        for (java.util.Map.Entry<String, String> e : set.entrySet()) {
+            values.addProperty(e.getKey(), e.getValue());
+        }
+        if (users != null && !users.isEmpty()) {
+            com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+            for (String u : users) arr.add(u);
+            values.add("users", arr);
+        }
+        ApiCallback<JsonObject> afterWrite = new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                List<String> toDelete = new ArrayList<>(del);
+                if (users != null && users.isEmpty()) toDelete.add("users");
+                deleteOptions(cfg, section, toDelete, 0, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        };
+        if (section == null) {
+            api().uciAdd(cfg, "server", null, values, new ApiCallback<JsonObject>() {
+                @Override
+                public void onSuccess(JsonObject result) {
+                    // 新段名由 ubus 返回(section 字段);删键步骤对新段无意义,直接 apply
+                    apply(cfg, null, cb);
+                }
+
+                @Override
+                public void onFailure(ApiError error) {
+                    cb.onFailure(error);
+                }
+            });
+        } else {
+            api().uciSet(cfg, section, values, afterWrite);
+        }
+    }
+
+    private static void deleteOptions(String cfg, String section, List<String> options,
+                                      int index, ApiCallback<Boolean> cb) {
+        if (section == null || index >= options.size()) {
+            apply(cfg, null, cb);
+            return;
+        }
+        api().uciDelete(cfg, section, options.get(index), new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                deleteOptions(cfg, section, options, index + 1, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                // 删一个不存在的键会报错,不值得让整次保存失败:继续
+                deleteOptions(cfg, section, options, index + 1, cb);
+            }
+        });
+    }
+
+    /** 删除一个服务实例 */
+    public static void deleteServer(String config, String section,
+                                    ApiCallback<Boolean> cb) {
+        String cfg = serverConfigOf(config);
+        api().uciDelete(cfg, section, null, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                apply(cfg, null, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 新建一个服务端用户(username/password/uuid),只落盘不重启 */
+    public static void addServerUser(String config, String username, String password,
+                                     String uuid, ApiCallback<Boolean> cb) {
+        JsonObject values = new JsonObject();
+        values.addProperty("username", username);
+        values.addProperty("password", password);
+        values.addProperty("uuid", uuid);
+        String cfg = serverConfigOf(config);
+        api().uciAdd(cfg, "user", null, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                api().uciApplyOrCommit(cfg, new ApiCallback<JsonObject>() {
+                    @Override
+                    public void onSuccess(JsonObject r2) {
+                        cb.onSuccess(true);
+                    }
+
+                    @Override
+                    public void onFailure(ApiError error) {
+                        cb.onFailure(error);
+                    }
+                });
             }
 
             @Override

@@ -75,14 +75,29 @@
             </com.google.android.material.card.MaterialCardView>
 
             <!-- 服务列表 -->
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
                 android:layout_marginTop="20dp"
                 android:layout_marginBottom="8dp"
-                android:text="@string/pw_server_list_header"
-                android:textAppearance="@style/TextAppearance.Wrthub.SectionHeader" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:text="@string/pw_server_list_header"
+                    android:textAppearance="@style/TextAppearance.Wrthub.SectionHeader" />
+
+                <Button
+                    android:id="@+id/pws_add"
+                    style="@style/Widget.Wrthub.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pws_add" />
+            </LinearLayout>
 
             <com.google.android.material.card.MaterialCardView
                 style="@style/Widget.Wrthub.Card"

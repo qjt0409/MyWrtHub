@@ -15,4 +15,9 @@ public class Passwall2ServerActivity extends PasswallServerActivity {
     protected int pwTitleRes() {
         return R.string.svc_passwall2;
     }
+
+    @Override
+    protected Class<?> editActivityClass() {
+        return Passwall2ServerEditActivity.class;
+    }
 }

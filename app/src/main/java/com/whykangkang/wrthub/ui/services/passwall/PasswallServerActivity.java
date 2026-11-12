@@ -42,6 +42,18 @@ public class PasswallServerActivity extends AppCompatActivity {
         return R.string.svc_passwall;
     }
 
+    /** 实例编辑页的类(PassWall2 子类覆写) */
+    protected Class<?> editActivityClass() {
+        return PasswallServerEditActivity.class;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 从编辑页回来后刷新(首次加载由 onCreate 负责)
+        if (info != null) load();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -57,6 +69,11 @@ public class PasswallServerActivity extends AppCompatActivity {
         masterSwitch.setOnCheckedChangeListener((v, checked) -> {
             if (rendering || busy || info == null) return;
             if (checked != info.serverEnabled) toggleMaster(checked);
+        });
+        findViewById(R.id.pws_add).setOnClickListener(v -> {
+            android.content.Intent intent =
+                    new android.content.Intent(this, editActivityClass());
+            startActivity(intent);
         });
         load();
     }
@@ -103,6 +120,12 @@ public class PasswallServerActivity extends AppCompatActivity {
             sw.setOnCheckedChangeListener((v, checked) -> {
                 if (rendering || busy) return;
                 if (checked != e.enable) toggleEntry(e, checked);
+            });
+            row.setOnClickListener(v -> {
+                android.content.Intent intent =
+                        new android.content.Intent(this, editActivityClass());
+                intent.putExtra(PasswallServerEditActivity.EXTRA_SECTION, e.section);
+                startActivity(intent);
             });
             rows.addView(row);
             // 运行状态:总开关开着且本实例启用时才查(其余情况必然没在跑)

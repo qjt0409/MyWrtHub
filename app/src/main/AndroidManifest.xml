@@ -110,6 +110,12 @@
             android:name=".ui.services.passwall.Passwall2ServerActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.services.passwall.PasswallServerEditActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.services.passwall.Passwall2ServerEditActivity"
+            android:exported="false" />
+        <activity
             android:name=".ui.services.oaf.AppFilterActivity"
             android:exported="false" />
         <activity
