@@ -425,6 +425,173 @@ public final class PasswallApi {
     }
 
     // =====================================================================
+    // 服务端(LuCI 的 server 页):路由器自己当代理服务器
+    //   总开关 = 全局段的 enable 键(与客户端总开关 enabled 是两个键,同段并存);
+    //   服务实例 = type=server 的段{enable, remarks, type, protocol, port};
+    //   单个实例的运行状态走 CGI server_status(查进程,口径同 LuCI 列表页)。
+    //   PassWall2 结构相同(仅少一个 start_delay 键,不影响本页)。
+    // =====================================================================
+
+    /** 一个服务实例(server 段) */
+    public static final class ServerEntry {
+        public String section = "";
+        public boolean enable;
+        public String remarks = "";
+        public String type = "";
+        public String protocol = "";
+        public String port = "";
+
+        /** 类型展示名,口径同 LuCI:Xray/sing-box 拼协议名,其余显示 type 原文 */
+        public String displayType() {
+            if ("sing-box".equals(type) || "Xray".equals(type)) {
+                String td = "sing-box".equals(type) ? "Sing-Box" : type;
+                String p = protocolDisplay(protocol);
+                return p.isEmpty() ? td : td + " " + p;
+            }
+            return type == null ? "" : type;
+        }
+
+        static String protocolDisplay(String p) {
+            if (p == null) return "";
+            switch (p) {
+                case "vmess": return "VMess";
+                case "vless": return "VLESS";
+                case "shadowsocks": return "SS";
+                case "shadowsocksr": return "SSR";
+                case "wireguard": return "WG";
+                case "hysteria": return "HY";
+                case "hysteria2": return "HY2";
+                case "anytls": return "AnyTLS";
+                default:
+                    return p.isEmpty() ? "" : Character.toUpperCase(p.charAt(0)) + p.substring(1);
+            }
+        }
+    }
+
+    /** 服务端整页数据:总开关 + 实例列表 */
+    public static final class ServerInfo {
+        public String config = CONFIG;
+        public String globalSection = "";
+        /** 服务端总开关(global 段 enable 键);键不存在 = 关 */
+        public boolean serverEnabled;
+        public final List<ServerEntry> servers = new ArrayList<>();
+    }
+
+    public static void getServerInfo(String config, ApiCallback<ServerInfo> cb) {
+        api().uciGetConfig(config, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                ServerInfo parsed = parseServer(result);
+                parsed.config = config;
+                cb.onSuccess(parsed);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    static ServerInfo parseServer(JsonObject result) {
+        ServerInfo out = new ServerInfo();
+        JsonObject values = result.has("values") && result.get("values").isJsonObject()
+                ? result.getAsJsonObject("values") : result;
+        for (String key : values.keySet()) {
+            JsonElement el = values.get(key);
+            if (!el.isJsonObject()) continue;
+            JsonObject sec = el.getAsJsonObject();
+            String type = str(sec, ".type", "");
+            if ("global".equals(type)) {
+                if (out.globalSection.isEmpty()) {
+                    out.globalSection = key;
+                    out.serverEnabled = EqosApi.uciBool(sec, "enable", false);
+                }
+            } else if ("server".equals(type)) {
+                ServerEntry e = new ServerEntry();
+                e.section = key;
+                e.enable = EqosApi.uciBool(sec, "enable", false);
+                e.remarks = str(sec, "remarks", "");
+                e.type = str(sec, "type", "");
+                e.protocol = str(sec, "protocol", "");
+                e.port = str(sec, "port", "");
+                out.servers.add(e);
+            }
+        }
+        return out;
+    }
+
+    /** 服务端总开关:写全局段 enable 键,apply 后重启服务生效 */
+    public static void setServerEnabled(ServerInfo info, boolean on,
+                                        ApiCallback<Boolean> cb) {
+        if (info.globalSection.isEmpty()) {
+            cb.onFailure(new ApiError(ApiError.Type.INVALID_RESPONSE, "缺少全局配置段"));
+            return;
+        }
+        JsonObject values = new JsonObject();
+        values.addProperty("enable", on ? "1" : "0");
+        api().uciSet(info.config, info.globalSection, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                apply(info.config, null, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /** 单个服务实例的开关:写该段 enable 键,apply 后重启服务生效 */
+    public static void setServerEntryEnabled(String config, String section, boolean on,
+                                             ApiCallback<Boolean> cb) {
+        JsonObject values = new JsonObject();
+        values.addProperty("enable", on ? "1" : "0");
+        api().uciSet(config, section, values, new ApiCallback<JsonObject>() {
+            @Override
+            public void onSuccess(JsonObject result) {
+                apply(config, null, cb);
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onFailure(error);
+            }
+        });
+    }
+
+    /**
+     * 单个服务实例是否在运行:CGI server_status?index=&id=(LuCI 列表页同款,
+     * 服务端查进程表)。返回 false 含未运行与查询失败两种情况,界面只作状态点展示。
+     */
+    public static void serverRunning(String config, int index, String section,
+                                     ApiCallback<Boolean> cb) {
+        String path = "/admin/services/" + config + "/server_status?index=" + index
+                + "&id=" + section;
+        api().cgiGetAsBrowser(path, 15, new ApiCallback<String>() {
+            @Override
+            public void onSuccess(String body) {
+                cb.onSuccess(parseServerStatus(body));
+            }
+
+            @Override
+            public void onFailure(ApiError error) {
+                cb.onSuccess(false);
+            }
+        });
+    }
+
+    static boolean parseServerStatus(String body) {
+        try {
+            JsonObject o = JsonParser.parseString(body).getAsJsonObject();
+            return o.has("status") && o.get("status").getAsBoolean();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // =====================================================================
     // 组件运行状态(LuCI 状态页的 index_status,CGI 直读)
     // =====================================================================
 

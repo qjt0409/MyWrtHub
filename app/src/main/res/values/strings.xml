@@ -573,6 +573,15 @@
     <string name="pw_sub_update">Update</string>
     <string name="pw_sub_delete">Delete</string>
     <string name="pw_sub_update_all">Update all</string>
+    <string name="pw_server_entry">Server</string>
+    <string name="pw_server_entry_sub">Use this router as a proxy server (inbound)</string>
+    <string name="pw_server_master">Server master switch</string>
+    <string name="pw_server_master_hint">Enabled instances only run while this is on</string>
+    <string name="pw_server_list_header">Servers</string>
+    <string name="pw_server_empty">No server instances yet. Add one in LuCI (PassWall - Server).</string>
+    <string name="pw_server_running">Running</string>
+    <string name="pw_server_stopped">Stopped</string>
+    <string name="pw_server_unnamed">Unnamed server</string>
     <string name="pw_sub_add_title">Add subscription</string>
     <string name="pw_sub_remark_hint">Remark, e.g. provider name</string>
     <string name="pw_sub_url_hint">Subscription URL</string>

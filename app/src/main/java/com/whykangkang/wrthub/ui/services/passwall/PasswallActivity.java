@@ -1,5 +1,6 @@
 package com.whykangkang.wrthub.ui.services.passwall;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -81,6 +82,11 @@ public class PasswallActivity extends AppCompatActivity {
         return getString(pwTitleRes());
     }
 
+    /** 服务端二级页的类(PassWall2 子类覆写为它的服务端页) */
+    protected Class<?> serverActivityClass() {
+        return PasswallServerActivity.class;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -136,6 +142,8 @@ public class PasswallActivity extends AppCompatActivity {
         });
         findViewById(R.id.pw_pick_card).setOnClickListener(v ->
                 scrollView.post(() -> scrollView.smoothScrollTo(0, nodesHeader.getTop())));
+        findViewById(R.id.pw_server_card).setOnClickListener(v ->
+                startActivity(new Intent(this, serverActivityClass())));
         View.OnClickListener checkClick = v -> {
             if (!busy && settings != null) runNetCheck();
         };

@@ -6,6 +6,7 @@
 - **OpenAppFilter**：对接路由器上的 OpenAppFilter（appfilter），应用过滤与上网记录，功能点子来自 OPAssistant。
 - **终端页（1.1）**：底部「终端」页照 OPAssistant 复刻——fwx 实时上下行速率、今日流量与活跃时长、常用 App、3 秒刷新；点开有详情六页签（基本信息 / 管控规则 / App统计 / 今日流量 / 常用App / 应用记录）和「拉黑」（fwx 上网黑名单）。
 - **设备限速（1.1）**：对接固件实际装的 `luci-app-eqosplus`（不是老 eqos），按 IP / MAC / IP 段限速，单位 MB/s，带生效星期与时段；终端详情页可直接跳到对应设备的限速设置。
+- **1.9**：PassWall 与 PassWall2 主页新增「服务端 ›」入口行（在订阅管理卡下方），点进二级页原生管理：服务端总开关（全局段 `enable` 键，与客户端总开关 `enabled` 是两个键、同段并存）+ 服务实例列表（`server` 段：备注、类型·协议、端口、逐个开关），实例运行状态走 LuCI 的 `server_status` CGI 与网页版同口径。实例的新增/编辑表单仍在 LuCI 完成，本页只做开关管理。
 - **1.8**：服务页去掉「流量监控（vnstat）」与「FileBrowser」两个入口——本固件没有 luci-app-vnstat2 与 luci-app-filebrowser，这两项在服务页一直灰着占位，现从功能目录与服务页分组中一并移除（总览常用功能的候选列表也同步消失；已收藏过这两项的会自动过滤）。
 - **1.7**：服务页「网络服务」补上 PassWall / PassWall2 两个入口（1.2 只在 ServiceCatalog 注册了描述符，忘了把它们加进 ServicesFragment 的分组名单，所以服务页一直不显示，只能从总览常用功能进）；PassWall 节点列表的分组改为可折叠——默认全部折叠，只展开当前节点所在的那一组，点组头展开/收起。
 - **1.6**：PassWall 三处改走 LuCI 网页版同款 CGI 接口（实机坐实 `file.exec` 在部分固件上被 rpcd ACL 拒，curl/lua 都跑不了）——网络监测改调 `connect_status`、订阅更新改调 `subscribe_manual(_all)`（服务端后台跑，点完即返回）；运行状态新增 **TCP / UDP / DNS / HAPROXY** 组件监测（`index_status`，查核心进程本身），主状态也以 TCP 组件为准（procd 的 service list 对 PassWall 报不准）；国内 IP 改取 WAN 口地址（ubus 接口 dump 的默认路由接口），国外 IP 改由手机经路由器 Socks 出口实测（Socks 只绑 localhost 时取不到，显示 —）。

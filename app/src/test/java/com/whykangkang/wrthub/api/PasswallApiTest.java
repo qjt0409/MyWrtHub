@@ -172,4 +172,61 @@ public class PasswallApiTest {
         assertEquals(Boolean.TRUE, s.clientProxy);
         assertEquals(PasswallApi.QuickMode.CUSTOM, PasswallApi.quickModeOf(s));
     }
+
+    @Test
+    public void parseServer_globalEnableIsServerSwitchNotClient() {
+        // 服务端总开关是 global 段的 enable 键,与客户端的 enabled 互不影响
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"cfg010000\":{\".type\":\"global\",\"enabled\":\"0\",\"enable\":\"1\"},"
+                + "\"srv1\":{\".type\":\"server\",\"enable\":\"1\",\"remarks\":\"家里\","
+                + "\"type\":\"Xray\",\"protocol\":\"vless\",\"port\":\"443\"},"
+                + "\"srv2\":{\".type\":\"server\",\"remarks\":\"SS\","
+                + "\"type\":\"sing-box\",\"protocol\":\"shadowsocks\",\"port\":\"8388\"},"
+                + "\"n1\":{\".type\":\"nodes\",\"remarks\":\"节点\",\"address\":\"1.2.3.4\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.ServerInfo info = PasswallApi.parseServer(result);
+        assertTrue(info.serverEnabled);
+        assertEquals("cfg010000", info.globalSection);
+        assertEquals(2, info.servers.size());
+        assertTrue(info.servers.get(0).enable);
+        assertEquals("家里", info.servers.get(0).remarks);
+        assertEquals("443", info.servers.get(0).port);
+        // 没有 enable 键的实例 = 关
+        assertTrue(!info.servers.get(1).enable);
+    }
+
+    @Test
+    public void parseServer_missingEnableKeyMeansOff() {
+        JsonObject result = JsonParser.parseString("{\"values\":{"
+                + "\"cfg010000\":{\".type\":\"global\",\"enabled\":\"1\"}"
+                + "}}").getAsJsonObject();
+        PasswallApi.ServerInfo info = PasswallApi.parseServer(result);
+        assertTrue(!info.serverEnabled);
+        assertEquals(0, info.servers.size());
+    }
+
+    @Test
+    public void serverEntry_displayTypeMatchesLuci() {
+        PasswallApi.ServerEntry e = new PasswallApi.ServerEntry();
+        e.type = "Xray";
+        e.protocol = "vless";
+        assertEquals("Xray VLESS", e.displayType());
+        e.type = "sing-box";
+        e.protocol = "shadowsocks";
+        assertEquals("Sing-Box SS", e.displayType());
+        e.type = "sing-box";
+        e.protocol = "hysteria2";
+        assertEquals("Sing-Box HY2", e.displayType());
+        e.type = "Socks";
+        e.protocol = "";
+        assertEquals("Socks", e.displayType());
+    }
+
+    @Test
+    public void parseServerStatus_readsBoolean() {
+        assertTrue(PasswallApi.parseServerStatus("{\"index\":\"0\",\"status\":true}"));
+        assertTrue(!PasswallApi.parseServerStatus("{\"index\":\"0\",\"status\":false}"));
+        assertTrue(!PasswallApi.parseServerStatus("not json"));
+        assertTrue(!PasswallApi.parseServerStatus("{}"));
+    }
 }

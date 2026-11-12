@@ -574,6 +574,15 @@
     <string name="pw_sub_update">更新</string>
     <string name="pw_sub_delete">删除</string>
     <string name="pw_sub_update_all">全部更新</string>
+    <string name="pw_server_entry">服务端</string>
+    <string name="pw_server_entry_sub">让这台路由器作为代理服务器（入站）</string>
+    <string name="pw_server_master">服务端总开关</string>
+    <string name="pw_server_master_hint">开启后，已启用的服务实例才会运行</string>
+    <string name="pw_server_list_header">服务列表</string>
+    <string name="pw_server_empty">尚未添加服务实例，请在 LuCI 的服务端页面添加</string>
+    <string name="pw_server_running">运行中</string>
+    <string name="pw_server_stopped">未运行</string>
+    <string name="pw_server_unnamed">未命名服务</string>
     <string name="pw_sub_add_title">添加订阅</string>
     <string name="pw_sub_remark_hint">备注，如机场名</string>
     <string name="pw_sub_url_hint">订阅地址 URL</string>

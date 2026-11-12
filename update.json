@@ -1,1 +1,1 @@
-{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.8:服务页去掉「流量监控(vnstat)」与「FileBrowser」两个入口(本固件未装这两个插件,原先一直灰着占位)。含 1.7 的 PassWall 入口补全与节点分组折叠。", "versionCode": 9, "versionName": "1.8"}
+{"downloadUrl": "https://github.com/qjt0409/MyWrtHub/releases", "forceUpdate": false, "updateMessage": "1.9:PassWall 与 PassWall2 主页新增「服务端」入口行,点进二级页:服务端总开关 + 服务实例列表(逐个开关与运行状态),与 LuCI 服务端页同源。含 1.8 的服务页精简。", "versionCode": 10, "versionName": "1.9"}
