@@ -533,6 +533,9 @@ public final class PasswallApi {
         public final List<String> users = new ArrayList<>();
         /** 段内全部标量键(编辑表单回填用,含本页不展示的键,只读不写回) */
         public final java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
+        /** 段内全部列表键(DynamicList 类,编辑表单回填用) */
+        public final java.util.Map<String, List<String>> listFields =
+                new java.util.LinkedHashMap<>();
 
         /** 类型展示名,口径同 LuCI:Xray/sing-box 拼协议名,其余显示 type 原文 */
         public String displayType() {
@@ -631,6 +634,9 @@ public final class PasswallApi {
                     JsonElement v = sec.get(k);
                     if (v != null && v.isJsonPrimitive()) {
                         e.fields.put(k, v.getAsString());
+                    } else if (v != null && v.isJsonArray()) {
+                        List<String> items = strList(sec, k);
+                        if (!items.isEmpty()) e.listFields.put(k, items);
                     }
                 }
                 out.servers.add(e);
@@ -699,16 +705,30 @@ public final class PasswallApi {
     /**
      * 新增(section 为 null)或编辑一个服务实例。
      * set 是要写入的标量键;del 是要删掉的键(表单清空的项);
+     * lists 是列表型键(DynamicList),空列表 = 删键;
      * users 非 null 时写 users 列表(空列表 = 删掉 users 键)。
-     * 本页不管理的键(传输/TLS/自定义配置等)一概不动。
+     * 本页不管理的键(自定义配置/PEM 粘贴等)一概不动。
      */
     public static void saveServer(String config, String section,
                                   java.util.Map<String, String> set, List<String> del,
+                                  java.util.Map<String, List<String>> lists,
                                   List<String> users, ApiCallback<Boolean> cb) {
         String cfg = serverConfigOf(config);
         JsonObject values = new JsonObject();
         for (java.util.Map.Entry<String, String> e : set.entrySet()) {
             values.addProperty(e.getKey(), e.getValue());
+        }
+        List<String> allDel = new ArrayList<>(del);
+        if (lists != null) {
+            for (java.util.Map.Entry<String, List<String>> e : lists.entrySet()) {
+                if (e.getValue() == null || e.getValue().isEmpty()) {
+                    allDel.add(e.getKey());
+                } else {
+                    com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+                    for (String item : e.getValue()) arr.add(item);
+                    values.add(e.getKey(), arr);
+                }
+            }
         }
         if (users != null && !users.isEmpty()) {
             com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
@@ -718,7 +738,7 @@ public final class PasswallApi {
         ApiCallback<JsonObject> afterWrite = new ApiCallback<JsonObject>() {
             @Override
             public void onSuccess(JsonObject result) {
-                List<String> toDelete = new ArrayList<>(del);
+                List<String> toDelete = new ArrayList<>(allDel);
                 if (users != null && users.isEmpty()) toDelete.add("users");
                 deleteOptions(cfg, section, toDelete, 0, cb);
             }

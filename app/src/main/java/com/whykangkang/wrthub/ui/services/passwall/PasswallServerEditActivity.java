@@ -22,14 +22,17 @@ import com.whykangkang.wrthub.api.ApiError;
 import com.whykangkang.wrthub.api.PasswallApi;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * 服务端实例新增/编辑页:按类型动态生成表单(通用项 + 类型特有项 + 用户绑定)。
- * 只写本页管理的键;传输/TLS/自定义配置等高级键不读不写、原样保留。
+ * 服务端实例新增/编辑页:字段按 LuCI server_config 的结构动态生成 ——
+ * 通用项 + 协议细项 + 传输 + TLS/REALITY + 用户绑定。
+ * 只写本页管理的键;自定义配置、PEM 粘贴等极少数字段不读不写、原样保留。
+ * 协议下拉是固定槽位(不参与重建),其余细项区按类型/协议/TLS 开关重建。
  */
 public class PasswallServerEditActivity extends AppCompatActivity {
 
@@ -37,27 +40,32 @@ public class PasswallServerEditActivity extends AppCompatActivity {
 
     private static final String[] TYPE_LABELS = {
             "Socks", "Sing-Box", "Xray", "Shadowsocks Rust", "ShadowsocksR", "Hysteria2"};
+    private static final String[] ALPN_VALUES = {
+            "default", "h3", "h2", "h3,h2", "http/1.1", "h2,http/1.1", "h3,h2,http/1.1"};
+    private static final String[] TCP_UDP = {"tcp", "udp", "tcp,udp"};
+    private static final String[] GUISE = {
+            "none", "srtp", "utp", "wechat-video", "dtls", "wireguard", "dns"};
 
-    private LinearLayout form;
+    private LinearLayout form, protocolBox, extrasBox, usersBox;
     private EditText etRemarks, etPort;
     private SwitchMaterial swEnable;
-    private Spinner spType;
-    private LinearLayout dynamicBox, usersBox;
+    private Spinner spType, spProtocol;
+    private String[] protocolValues = new String[0];
 
     private final Map<String, EditText> textMap = new LinkedHashMap<>();
+    private final Map<String, EditText> listTextMap = new LinkedHashMap<>();
     private final Map<String, Spinner> spinMap = new LinkedHashMap<>();
     private final Map<String, String[]> spinValues = new LinkedHashMap<>();
     private final Map<String, SwitchMaterial> flagMap = new LinkedHashMap<>();
-    private Spinner spProtocol;
-    private String[] protocolValues = new String[0];
     private Spinner spUserSingle;
     private final List<CheckBox> userChecks = new ArrayList<>();
 
     private PasswallApi.ServerInfo info;
     private PasswallApi.ServerEntry editing;
     private String section;
-    /** 动态字段的当前值(重建表单时不丢):key -> value */
+    /** 动态字段当前值(重建细项区时不丢) */
     private final Map<String, String> cur = new LinkedHashMap<>();
+    private final Map<String, List<String>> curLists = new LinkedHashMap<>();
     private final List<String> curUsers = new ArrayList<>();
     private String curUser = "";
     private boolean busy;
@@ -101,6 +109,7 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                         return;
                     }
                     cur.putAll(editing.fields);
+                    curLists.putAll(editing.listFields);
                     curUsers.clear();
                     curUsers.addAll(editing.users);
                     curUser = editing.user;
@@ -139,9 +148,15 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         etPort = addText(R.string.pwse_port,
                 editing != null ? editing.port : "", true);
 
-        dynamicBox = new LinearLayout(this);
-        dynamicBox.setOrientation(LinearLayout.VERTICAL);
-        form.addView(dynamicBox);
+        protocolBox = new LinearLayout(this);
+        protocolBox.setOrientation(LinearLayout.VERTICAL);
+        form.addView(protocolBox);
+        extrasBox = new LinearLayout(this);
+        extrasBox.setOrientation(LinearLayout.VERTICAL);
+        form.addView(extrasBox);
+        usersBox = new LinearLayout(this);
+        usersBox.setOrientation(LinearLayout.VERTICAL);
+        form.addView(usersBox);
 
         TextView note = new TextView(this);
         note.setText(R.string.pwse_advanced_note);
@@ -154,43 +169,65 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             @Override
             public void onItemSelected(int position) {
                 if (building) return;
-                harvestDynamic();
-                // 换类型时协议回到该类型第一个,避免残留不兼容的协议值
+                harvestAll();
                 cur.remove("protocol");
-                rebuildDynamic();
+                buildProtocolSpinner();
+                rebuildExtras();
             }
         });
         building = false;
-        rebuildDynamic();
+        buildProtocolSpinner();
+        rebuildExtras();
     }
 
-    private void rebuildDynamic() {
+    /** 协议下拉(固定槽位,重建细项时不动它) */
+    private void buildProtocolSpinner() {
         building = true;
-        harvestDynamicWidgetsOnly();
-        dynamicBox.removeAllViews();
-        textMap.clear();
-        spinMap.clear();
-        spinValues.clear();
-        flagMap.clear();
+        protocolBox.removeAllViews();
         spProtocol = null;
-        protocolValues = PasswallApi.protocolsFor(currentType());
+        String type = currentType();
+        if ("SSR".equals(type)) {
+            protocolValues = PasswallApi.SSR_PROTOCOLS;
+        } else {
+            protocolValues = PasswallApi.protocolsFor(type);
+        }
         if (protocolValues.length > 0) {
             String proto = cur.getOrDefault("protocol", protocolValues[0]);
-            spProtocol = addSpinnerTo(dynamicBox, null, R.string.pwse_protocol,
+            spProtocol = addSpinnerTo(protocolBox, null, R.string.pwse_protocol,
                     protocolValues, protocolLabels(protocolValues), proto);
             spProtocol.setOnItemSelectedListener(new SimpleItemSelected() {
                 @Override
                 public void onItemSelected(int position) {
                     if (building) return;
-                    harvestDynamic();
-                    rebuildDynamic();
+                    harvestAll();
+                    rebuildExtras();
                 }
             });
         }
+        building = false;
+    }
+
+    private void rebuildExtras() {
+        building = true;
+        harvestExtrasOnly();
+        extrasBox.removeAllViews();
+        textMap.clear();
+        listTextMap.clear();
+        spinMap.clear();
+        spinValues.clear();
+        flagMap.clear();
         buildTypeFields();
-        usersBox = new LinearLayout(this);
-        usersBox.setOrientation(LinearLayout.VERTICAL);
-        dynamicBox.addView(usersBox);
+        // TLS / REALITY 开关变化时细项跟着变
+        for (String key : new String[]{"tls", "reality"}) {
+            SwitchMaterial sw = flagMap.get(key);
+            if (sw != null) {
+                sw.setOnCheckedChangeListener((v, checked) -> {
+                    if (building) return;
+                    harvestAll();
+                    rebuildExtras();
+                });
+            }
+        }
         rebuildUsers();
         building = false;
     }
@@ -200,64 +237,364 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         String proto = currentProtocol();
         switch (type) {
             case "Socks":
-                addFlagTo(dynamicBox, "auth", R.string.pwse_auth, curFlag("auth", false));
+                addFlagTo("auth", R.string.pwse_auth, curFlag("auth", false));
                 break;
             case "SS-Rust":
-                addSpinnerTo(dynamicBox, "method", R.string.pwse_method,
+                addSpinnerTo("method", R.string.pwse_method,
                         PasswallApi.SSRUST_METHODS, PasswallApi.SSRUST_METHODS,
                         cur.getOrDefault("method", "aes-256-gcm"));
-                addTextTo(dynamicBox, "timeout", R.string.pwse_timeout,
+                addTextTo("timeout", R.string.pwse_timeout,
                         cur.getOrDefault("timeout", ""), true);
-                addFlagTo(dynamicBox, "tcp_fast_open", R.string.pwse_tcp_fast_open,
+                addFlagTo("tcp_fast_open", R.string.pwse_tcp_fast_open,
                         curFlag("tcp_fast_open", false));
                 break;
             case "SSR":
-                addSpinnerTo(dynamicBox, "method", R.string.pwse_method,
+                addSpinnerTo("method", R.string.pwse_method,
                         PasswallApi.SSR_METHODS, PasswallApi.SSR_METHODS,
                         cur.getOrDefault("method", "aes-256-cfb"));
-                addSpinnerTo(dynamicBox, "protocol", R.string.pwse_protocol,
-                        PasswallApi.SSR_PROTOCOLS, PasswallApi.SSR_PROTOCOLS,
-                        cur.getOrDefault("protocol", "origin"));
-                addTextTo(dynamicBox, "protocol_param", R.string.pwse_protocol_param,
+                addTextTo("protocol_param", R.string.pwse_protocol_param,
                         cur.getOrDefault("protocol_param", ""), false);
-                addSpinnerTo(dynamicBox, "obfs", R.string.pwse_obfs,
+                addSpinnerTo("obfs", R.string.pwse_obfs,
                         PasswallApi.SSR_OBFS, PasswallApi.SSR_OBFS,
                         cur.getOrDefault("obfs", "plain"));
-                addTextTo(dynamicBox, "obfs_param", R.string.pwse_obfs_param,
+                addTextTo("obfs_param", R.string.pwse_obfs_param,
                         cur.getOrDefault("obfs_param", ""), false);
-                addTextTo(dynamicBox, "timeout", R.string.pwse_timeout,
+                addTextTo("timeout", R.string.pwse_timeout,
                         cur.getOrDefault("timeout", ""), true);
-                addFlagTo(dynamicBox, "tcp_fast_open", R.string.pwse_tcp_fast_open,
+                addFlagTo("tcp_fast_open", R.string.pwse_tcp_fast_open,
                         curFlag("tcp_fast_open", false));
-                addFlagTo(dynamicBox, "udp_forward", R.string.pwse_udp_forward,
+                addFlagTo("udp_forward", R.string.pwse_udp_forward,
                         curFlag("udp_forward", false));
                 break;
             case "Hysteria2":
-                addSpinnerTo(dynamicBox, "obfs_type", R.string.pwse_obfs_type,
-                        new String[]{"", "salamander", "gecko"},
-                        new String[]{getString(R.string.pwse_obfs_none), "Salamander", "Gecko"},
-                        cur.getOrDefault("obfs_type", ""));
-                addTextTo(dynamicBox, "obfs_password", R.string.pwse_obfs_password,
-                        cur.getOrDefault("obfs_password", ""), false);
+                addFlagTo("realms", R.string.pwse_realms, curFlag("realms", false));
+                addTextTo("realm_url", R.string.pwse_realm_url,
+                        cur.getOrDefault("realm_url", ""), false);
+                addObfsFields("obfs_type", "obfs_password", "", "");
                 break;
             case "sing-box":
+                buildSingboxFields(proto);
+                break;
             case "Xray":
-                if ("shadowsocks".equals(proto)) {
-                    addSpinnerTo(dynamicBox, "method", R.string.pwse_method,
-                            PasswallApi.SS_METHODS, PasswallApi.SS_METHODS,
-                            cur.getOrDefault("method", "aes-256-gcm"));
-                    addTextTo(dynamicBox, "ss_password", R.string.pwse_ss_password,
-                            cur.getOrDefault("ss_password", ""), false);
+                buildXrayFields(proto);
+                break;
+            default:
+                break;
+        }
+        // 通用尾巴:日志 + 防火墙放行(LuCI 各类型都有)
+        addFlagTo("log", R.string.pwse_log, curFlag("log", true));
+        addFlagTo("firewall_allow", R.string.pwse_firewall,
+                curFlag("firewall_allow", false));
+        addTextTo("firewall_allow_src", R.string.pwse_firewall_src,
+                cur.getOrDefault("firewall_allow_src", ""), false);
+        if ("sing-box".equals(type) || "Xray".equals(type)) {
+            addFlagTo("accept_lan", R.string.pwse_accept_lan,
+                    curFlag("accept_lan", false));
+        }
+    }
+
+    private void buildSingboxFields(String proto) {
+        switch (proto) {
+            case "direct":
+                addSpinnerTo("d_protocol", R.string.pwse_d_proto, TCP_UDP, TCP_UDP,
+                        cur.getOrDefault("d_protocol", "tcp"));
+                addTextTo("d_address", R.string.pwse_d_addr,
+                        cur.getOrDefault("d_address", ""), false);
+                addTextTo("d_port", R.string.pwse_d_port,
+                        cur.getOrDefault("d_port", ""), true);
+                break;
+            case "shadowsocks":
+                addSsFields();
+                addTransportGroup(false);
+                break;
+            case "vmess":
+            case "vless":
+            case "trojan":
+                if ("vless".equals(proto)) {
+                    addTextTo("decryption", R.string.pwse_decryption,
+                            cur.getOrDefault("decryption", "none"), false);
                 }
+                addTransportGroup(false);
+                addTlsGroup(false, proto);
+                addFlagTo("mux", R.string.pwse_mux, curFlag("mux", false));
+                addFlagTo("tcpbrutal", R.string.pwse_tcpbrutal,
+                        curFlag("tcpbrutal", false));
+                addTextTo("tcpbrutal_up_mbps", R.string.pwse_up_mbps,
+                        cur.getOrDefault("tcpbrutal_up_mbps", ""), true);
+                addTextTo("tcpbrutal_down_mbps", R.string.pwse_down_mbps,
+                        cur.getOrDefault("tcpbrutal_down_mbps", ""), true);
+                break;
+            case "hysteria":
+                addTextTo("hysteria_obfs", R.string.pwse_obfs_password,
+                        cur.getOrDefault("hysteria_obfs", ""), false);
+                addTextTo("hysteria_up_mbps", R.string.pwse_up_mbps,
+                        cur.getOrDefault("hysteria_up_mbps", ""), true);
+                addTextTo("hysteria_down_mbps", R.string.pwse_down_mbps,
+                        cur.getOrDefault("hysteria_down_mbps", ""), true);
+                addTlsGroup(false, proto);
+                break;
+            case "hysteria2":
+                addHysteria2Fields();
+                addTlsGroup(false, proto);
+                break;
+            case "tuic":
+                addSpinnerTo("tuic_congestion_control", R.string.pwse_tuic_cc,
+                        new String[]{"bbr", "cubic", "new_reno"},
+                        new String[]{"BBR", "CUBIC", "New Reno"},
+                        cur.getOrDefault("tuic_congestion_control", "bbr"));
+                addFlagTo("tuic_zero_rtt_handshake", R.string.pwse_tuic_0rtt,
+                        curFlag("tuic_zero_rtt_handshake", false));
+                addTextTo("tuic_heartbeat", R.string.pwse_tuic_heartbeat,
+                        cur.getOrDefault("tuic_heartbeat", ""), true);
+                addSpinnerTo("tuic_alpn", R.string.pwse_alpn,
+                        ALPN_VALUES, ALPN_VALUES,
+                        cur.getOrDefault("tuic_alpn", "default"));
+                addTlsGroup(false, proto);
+                break;
+            case "naive":
+            case "anytls":
+                addTlsGroup(false, proto);
+                break;
+            case "masque":
+                addMasqueFields();
+                break;
+            case "wireguard":
+                addWireguardFields();
                 break;
             default:
                 break;
         }
     }
 
+    private void buildXrayFields(String proto) {
+        switch (proto) {
+            case "tunnel":
+                addSpinnerTo("d_protocol", R.string.pwse_d_proto, TCP_UDP, TCP_UDP,
+                        cur.getOrDefault("d_protocol", "tcp"));
+                addTextTo("d_address", R.string.pwse_d_addr,
+                        cur.getOrDefault("d_address", ""), false);
+                addTextTo("d_port", R.string.pwse_d_port,
+                        cur.getOrDefault("d_port", ""), true);
+                break;
+            case "shadowsocks":
+                addSsFields();
+                addSpinnerTo("ss_network", R.string.pwse_ss_network, TCP_UDP, TCP_UDP,
+                        cur.getOrDefault("ss_network", "tcp"));
+                addFlagTo("udp_forward", R.string.pwse_udp_forward,
+                        curFlag("udp_forward", false));
+                break;
+            case "vmess":
+            case "vless":
+            case "trojan":
+                if ("vless".equals(proto)) {
+                    addTextTo("decryption", R.string.pwse_decryption,
+                            cur.getOrDefault("decryption", "none"), false);
+                }
+                addTransportGroup(true);
+                addTlsGroup(true, proto);
+                addFlagTo("acceptProxyProtocol", R.string.pwse_accept_proxy,
+                        curFlag("acceptProxyProtocol", false));
+                addFlagTo("tcp_fast_open", R.string.pwse_tcp_fast_open,
+                        curFlag("tcp_fast_open", false));
+                addFlagTo("fallback", R.string.pwse_fallback,
+                        curFlag("fallback", false));
+                addTextTo("fallback_alpn", R.string.pwse_fb_alpn,
+                        cur.getOrDefault("fallback_alpn", ""), false);
+                addTextTo("fallback_path", R.string.pwse_fb_path,
+                        cur.getOrDefault("fallback_path", ""), false);
+                addTextTo("fallback_dest", R.string.pwse_fb_dest,
+                        cur.getOrDefault("fallback_dest", ""), false);
+                break;
+            case "hysteria2":
+                addHysteria2Fields();
+                addTlsGroup(true, proto);
+                break;
+            case "masque":
+                addMasqueFields();
+                break;
+            case "wireguard":
+                addWireguardFields();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void addSsFields() {
+        addSpinnerTo("method", R.string.pwse_method,
+                PasswallApi.SS_METHODS, PasswallApi.SS_METHODS,
+                cur.getOrDefault("method", "aes-256-gcm"));
+        addTextTo("ss_password", R.string.pwse_ss_password,
+                cur.getOrDefault("ss_password", ""), false);
+    }
+
+    private void addObfsFields(String typeKey, String passKey,
+                               String minKey, String maxKey) {
+        addSpinnerTo(typeKey, R.string.pwse_obfs_type,
+                new String[]{"", "salamander", "gecko"},
+                new String[]{getString(R.string.pwse_obfs_none), "Salamander", "Gecko"},
+                cur.getOrDefault(typeKey, ""));
+        addTextTo(passKey, R.string.pwse_obfs_password,
+                cur.getOrDefault(passKey, ""), false);
+        if (!minKey.isEmpty()) {
+            addTextTo(minKey, R.string.pwse_pkt_min,
+                    cur.getOrDefault(minKey, ""), true);
+            addTextTo(maxKey, R.string.pwse_pkt_max,
+                    cur.getOrDefault(maxKey, ""), true);
+        }
+    }
+
+    private void addHysteria2Fields() {
+        addFlagTo("hysteria2_realms", R.string.pwse_realms,
+                curFlag("hysteria2_realms", false));
+        addTextTo("hysteria2_realm_url", R.string.pwse_realm_url,
+                cur.getOrDefault("hysteria2_realm_url", ""), false);
+        addObfsFields("hysteria2_obfs_type", "hysteria2_obfs_password",
+                "hysteria2_obfs_MinPacketSize", "hysteria2_obfs_MaxPacketSize");
+        addTextTo("hysteria2_up_mbps", R.string.pwse_up_mbps,
+                cur.getOrDefault("hysteria2_up_mbps", ""), true);
+        addTextTo("hysteria2_down_mbps", R.string.pwse_down_mbps,
+                cur.getOrDefault("hysteria2_down_mbps", ""), true);
+        addFlagTo("hysteria2_ignore_client_bandwidth", R.string.pwse_ignore_bw,
+                curFlag("hysteria2_ignore_client_bandwidth", false));
+    }
+
+    private void addMasqueFields() {
+        addTextTo("masque_path", R.string.pwse_masque_path,
+                cur.getOrDefault("masque_path", ""), false);
+        addListTextTo("masque_address", R.string.pwse_masque_addr);
+        addTextTo("masque_mtu", R.string.pwse_mtu,
+                cur.getOrDefault("masque_mtu", ""), true);
+    }
+
+    private void addWireguardFields() {
+        addFlagTo("wireguard_system_interface", R.string.pwse_wg_sysif,
+                curFlag("wireguard_system_interface", false));
+        addTextTo("wireguard_mtu", R.string.pwse_mtu,
+                cur.getOrDefault("wireguard_mtu", ""), true);
+        addListTextTo("wireguard_local_address", R.string.pwse_wg_localaddr);
+        addTextTo("wireguard_private_key", R.string.pwse_wg_priv,
+                cur.getOrDefault("wireguard_private_key", ""), false);
+        addTextTo("wireguard_public_key", R.string.pwse_wg_pub,
+                cur.getOrDefault("wireguard_public_key", ""), false);
+    }
+
+    /** TLS 组:开关 + ALPN + REALITY / 证书路径 / ECH;vless 时带 flow */
+    private void addTlsGroup(boolean xray, String proto) {
+        addFlagTo("tls", R.string.pwse_tls, curFlag("tls", false));
+        if (!curFlag("tls", false)) return;
+        addSpinnerTo("alpn", R.string.pwse_alpn, ALPN_VALUES, ALPN_VALUES,
+                cur.getOrDefault("alpn", "default"));
+        if ("vless".equals(proto)) {
+            addSpinnerTo("flow", R.string.pwse_flow,
+                    new String[]{"", "xtls-rprx-vision"},
+                    new String[]{getString(R.string.pwse_obfs_none), "xtls-rprx-vision"},
+                    cur.getOrDefault("flow", ""));
+        }
+        addFlagTo("reality", R.string.pwse_reality, curFlag("reality", false));
+        if (curFlag("reality", false)) {
+            addTextTo("reality_private_key", R.string.pwse_reality_privkey,
+                    cur.getOrDefault("reality_private_key", ""), false);
+            addTextTo("reality_shortId", R.string.pwse_reality_shortid,
+                    cur.getOrDefault("reality_shortId", ""), false);
+            if (xray) {
+                addTextTo("reality_dest", R.string.pwse_reality_dest,
+                        cur.getOrDefault("reality_dest", ""), false);
+                addListTextTo("reality_serverNames", R.string.pwse_reality_servernames);
+            } else {
+                addTextTo("reality_handshake_server", R.string.pwse_reality_handshake,
+                        cur.getOrDefault("reality_handshake_server", ""), false);
+                addTextTo("reality_handshake_server_port",
+                        R.string.pwse_reality_handshake_port,
+                        cur.getOrDefault("reality_handshake_server_port", ""), true);
+            }
+        } else {
+            addTextTo("tls_certificateFile", R.string.pwse_cert_file,
+                    cur.getOrDefault("tls_certificateFile", ""), false);
+            addTextTo("tls_keyFile", R.string.pwse_key_file,
+                    cur.getOrDefault("tls_keyFile", ""), false);
+            addFlagTo("ech", R.string.pwse_ech, curFlag("ech", false));
+            addTextTo("ech_key", R.string.pwse_ech_key,
+                    cur.getOrDefault("ech_key", ""), false);
+        }
+    }
+
+    /** 传输组:按 transport 值出对应细项 */
+    private void addTransportGroup(boolean xray) {
+        String[] values = xray
+                ? new String[]{"raw", "mkcp", "ws", "grpc", "httpupgrade", "xhttp"}
+                : new String[]{"tcp", "http", "ws", "httpupgrade", "quic", "grpc"};
+        String[] labels = xray
+                ? new String[]{"RAW", "mKCP", "WebSocket", "gRPC", "HttpUpgrade", "XHTTP"}
+                : new String[]{"TCP", "HTTP", "WebSocket", "HTTPUpgrade", "QUIC", "gRPC"};
+        String transport = cur.getOrDefault("transport", values[0]);
+        addSpinnerTo("transport", R.string.pwse_transport, values, labels, transport);
+        switch (transport) {
+            case "http":
+                addListTextTo("http_host", R.string.pwse_http_host);
+                addTextTo("http_path", R.string.pwse_http_path,
+                        cur.getOrDefault("http_path", ""), false);
+                break;
+            case "ws":
+                addTextTo("ws_host", R.string.pwse_ws_host,
+                        cur.getOrDefault("ws_host", ""), false);
+                addTextTo("ws_path", R.string.pwse_ws_path,
+                        cur.getOrDefault("ws_path", ""), false);
+                if (!xray) {
+                    addTextTo("ws_earlyDataHeaderName", R.string.pwse_ws_early,
+                            cur.getOrDefault("ws_earlyDataHeaderName", ""), false);
+                }
+                break;
+            case "httpupgrade":
+                addTextTo("httpupgrade_host", R.string.pwse_hu_host,
+                        cur.getOrDefault("httpupgrade_host", ""), false);
+                addTextTo("httpupgrade_path", R.string.pwse_hu_path,
+                        cur.getOrDefault("httpupgrade_path", ""), false);
+                break;
+            case "xhttp":
+                addTextTo("xhttp_host", R.string.pwse_xhttp_host,
+                        cur.getOrDefault("xhttp_host", ""), false);
+                addTextTo("xhttp_path", R.string.pwse_xhttp_path,
+                        cur.getOrDefault("xhttp_path", ""), false);
+                break;
+            case "grpc":
+                addTextTo("grpc_serviceName", R.string.pwse_grpc_name,
+                        cur.getOrDefault("grpc_serviceName", ""), false);
+                break;
+            case "mkcp":
+                addSpinnerTo("mkcp_guise", R.string.pwse_mkcp_guise, GUISE, GUISE,
+                        cur.getOrDefault("mkcp_guise", "none"));
+                addTextTo("mkcp_mtu", R.string.pwse_mkcp_mtu,
+                        cur.getOrDefault("mkcp_mtu", ""), true);
+                addTextTo("mkcp_seed", R.string.pwse_mkcp_seed,
+                        cur.getOrDefault("mkcp_seed", ""), false);
+                break;
+            case "raw":
+                addSpinnerTo("tcp_guise", R.string.pwse_tcp_guise,
+                        new String[]{"none", "http"},
+                        new String[]{"none", "http"},
+                        cur.getOrDefault("tcp_guise", "none"));
+                addListTextTo("tcp_guise_http_host", R.string.pwse_http_host);
+                addListTextTo("tcp_guise_http_path", R.string.pwse_http_path);
+                break;
+            default:
+                break;
+        }
+        // transport 本身也要在切换时重建细项
+        Spinner sp = spinMap.get("transport");
+        if (sp != null) {
+            sp.setOnItemSelectedListener(new SimpleItemSelected() {
+                @Override
+                public void onItemSelected(int position) {
+                    if (building) return;
+                    harvestAll();
+                    rebuildExtras();
+                }
+            });
+        }
+    }
+
     private void rebuildUsers() {
-        if (usersBox == null) return;
-        // 先收割当前勾选,避免新建用户后丢失
         harvestUsersOnly();
         usersBox.removeAllViews();
         userChecks.clear();
@@ -318,10 +655,6 @@ public class PasswallServerEditActivity extends AppCompatActivity {
     }
 
     private String currentProtocol() {
-        if ("SSR".equals(currentType())) {
-            Spinner p = spinMap.get("protocol");
-            return p != null ? PasswallApi.SSR_PROTOCOLS[p.getSelectedItemPosition()] : "";
-        }
         if (spProtocol != null && protocolValues.length > 0) {
             return protocolValues[spProtocol.getSelectedItemPosition()];
         }
@@ -329,22 +662,28 @@ public class PasswallServerEditActivity extends AppCompatActivity {
     }
 
     private boolean curFlag(String key, boolean def) {
+        SwitchMaterial sw = flagMap.get(key);
+        if (sw != null && extrasBox != null && sw.getParent() != null) {
+            return sw.isChecked();
+        }
         String v = cur.get(key);
         return v == null ? def : "1".equals(v);
     }
 
-    /** 把动态区控件的值收进 cur / curUser / curUsers(重建前调用) */
-    private void harvestDynamic() {
-        harvestDynamicWidgetsOnly();
+    private void harvestAll() {
+        harvestExtrasOnly();
         harvestUsersOnly();
         if (spProtocol != null && protocolValues.length > 0) {
             cur.put("protocol", protocolValues[spProtocol.getSelectedItemPosition()]);
         }
     }
 
-    private void harvestDynamicWidgetsOnly() {
+    private void harvestExtrasOnly() {
         for (Map.Entry<String, EditText> e : textMap.entrySet()) {
             cur.put(e.getKey(), e.getValue().getText().toString().trim());
+        }
+        for (Map.Entry<String, EditText> e : listTextMap.entrySet()) {
+            curLists.put(e.getKey(), splitList(e.getValue().getText().toString()));
         }
         for (Map.Entry<String, Spinner> e : spinMap.entrySet()) {
             String[] vals = spinValues.get(e.getKey());
@@ -365,14 +704,24 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                 if (cb.isChecked()) curUsers.add((String) cb.getTag());
             }
         }
-        if (spUserSingle != null) {
+        if (spUserSingle != null && info != null) {
             int pos = spUserSingle.getSelectedItemPosition();
             curUser = pos <= 0 ? "" : info.users.get(pos - 1).section;
         }
     }
 
+    static List<String> splitList(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) return out;
+        for (String part : raw.split("[,\n]")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
     private void save() {
-        harvestDynamic();
+        harvestAll();
         String port = etPort.getText().toString().trim();
         if (!port.isEmpty()) {
             try {
@@ -390,20 +739,19 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         String type = currentType();
         set.put("type", type);
         putOrDel(set, del, "port", port);
-        String[] protos = PasswallApi.protocolsFor(type);
-        if (protos.length > 0) {
+        if (protocolValues.length > 0) {
             set.put("protocol", currentProtocol());
         }
-        // 动态字段:text 空 = 删键,其余照写
         for (String key : textMap.keySet()) {
             putOrDel(set, del, key, cur.getOrDefault(key, ""));
         }
+        Map<String, List<String>> lists = new LinkedHashMap<>();
+        for (String key : listTextMap.keySet()) {
+            lists.put(key, curLists.getOrDefault(key, new ArrayList<>()));
+        }
         for (String key : spinMap.keySet()) {
-            if ("protocol".equals(key) && "SSR".equals(type)) {
-                set.put("protocol", cur.getOrDefault("protocol", "origin"));
-            } else {
-                set.put(key, cur.getOrDefault(key, ""));
-            }
+            // 空值(如 flow/obfs_type 选了「不启用」)按删键处理,不写空串
+            putOrDel(set, del, key, cur.getOrDefault(key, ""));
         }
         for (String key : flagMap.keySet()) {
             set.put(key, cur.getOrDefault(key, "0"));
@@ -421,7 +769,7 @@ public class PasswallServerEditActivity extends AppCompatActivity {
             usersParam = new ArrayList<>();
         }
         busy = true;
-        PasswallApi.saveServer(pwConfig(), section, set, del, usersParam,
+        PasswallApi.saveServer(pwConfig(), section, set, del, lists, usersParam,
                 new ApiCallback<Boolean>() {
                     @Override
                     public void onSuccess(Boolean result) {
@@ -509,7 +857,6 @@ public class PasswallServerEditActivity extends AppCompatActivity {
                 .show();
     }
 
-    /** 新建用户后刷新用户列表,并自动选中刚建的那个 */
     private void reloadUsers(String newUsername) {
         PasswallApi.getServerInfo(pwConfig(), new ApiCallback<PasswallApi.ServerInfo>() {
             @Override
@@ -584,19 +931,34 @@ public class PasswallServerEditActivity extends AppCompatActivity {
     }
 
     private EditText addText(int labelRes, String value, boolean number) {
-        return addTextTo(form, null, labelRes, value, number);
-    }
-
-    private EditText addTextTo(ViewGroup parent, String key, int labelRes,
-                               String value, boolean number) {
-        addLabelTo(parent, labelRes);
+        addLabelTo(form, labelRes);
         EditText et = new EditText(this);
         et.setText(value);
         et.setTextSize(16);
         if (number) et.setInputType(InputType.TYPE_CLASS_NUMBER);
-        parent.addView(et);
-        if (key != null) textMap.put(key, et);
+        form.addView(et);
         return et;
+    }
+
+    private void addTextTo(String key, int labelRes, String value, boolean number) {
+        addLabelTo(extrasBox, labelRes);
+        EditText et = new EditText(this);
+        et.setText(value);
+        et.setTextSize(16);
+        if (number) et.setInputType(InputType.TYPE_CLASS_NUMBER);
+        extrasBox.addView(et);
+        textMap.put(key, et);
+    }
+
+    private void addListTextTo(String key, int labelRes) {
+        addLabelTo(extrasBox, labelRes);
+        EditText et = new EditText(this);
+        List<String> items = curLists.get(key);
+        et.setText(items == null ? "" : String.join(", ", items));
+        et.setTextSize(16);
+        et.setHint(R.string.pwse_list_hint);
+        extrasBox.addView(et);
+        listTextMap.put(key, et);
     }
 
     private Spinner addSpinner(int labelRes, String[] values, String[] labels,
@@ -604,9 +966,20 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         return addSpinnerTo(form, null, labelRes, values, labels, current);
     }
 
+    private void addSpinnerTo(String key, int labelRes, String[] values,
+                              String[] labels, String current) {
+        addSpinnerTo(extrasBox, key, labelRes, values, labels, current);
+    }
+
     private Spinner addSpinnerTo(ViewGroup parent, String key, int labelRes,
                                  String[] values, String[] labels, String current) {
         addLabelTo(parent, labelRes);
+        // 当前值不在选项里时(如值来自更新版本)把它加进来,避免打开编辑就被改掉
+        if (current != null && !current.isEmpty()
+                && !Arrays.asList(values).contains(current)) {
+            values = prepend(values, current);
+            labels = prepend(labels, current);
+        }
         Spinner sp = new Spinner(this);
         sp.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_dropdown_item, labels));
@@ -621,12 +994,19 @@ public class PasswallServerEditActivity extends AppCompatActivity {
         return sp;
     }
 
+    private static String[] prepend(String[] arr, String v) {
+        String[] out = new String[arr.length + 1];
+        out[0] = v;
+        System.arraycopy(arr, 0, out, 1, arr.length);
+        return out;
+    }
+
     private SwitchMaterial addFlag(int labelRes, boolean on) {
         return addFlagRow(form, null, labelRes, on);
     }
 
-    private SwitchMaterial addFlagTo(ViewGroup parent, String key, int labelRes, boolean on) {
-        return addFlagRow(parent, key, labelRes, on);
+    private void addFlagTo(String key, int labelRes, boolean on) {
+        addFlagRow(extrasBox, key, labelRes, on);
     }
 
     private SwitchMaterial addFlagRow(ViewGroup parent, String key, int labelRes, boolean on) {
